@@ -113,7 +113,7 @@ export async function startWork(plan: Plan): Promise<void> {
   return new Promise<void>((resolve) => {
     const child = spawn(
       "claude",
-      ["-p", prompt, "--dangerously-skip-permissions", "--output-format", "stream-json"],
+      ["-p", prompt, "--dangerously-skip-permissions", "--verbose", "--output-format", "stream-json"],
       {
         cwd: plan.project_path,
         stdio: ["ignore", "pipe", "pipe"],
