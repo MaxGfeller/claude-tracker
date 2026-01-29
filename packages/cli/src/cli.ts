@@ -5,7 +5,8 @@ import { parsePlanTitle } from "./plans";
 import { startWork, startWorkMultiple } from "./work";
 import { selectPlans } from "./select";
 import { existsSync } from "fs";
-import { resolve } from "path";
+import { resolve, dirname } from "path";
+import { spawnSync } from "child_process";
 
 const RESET = "\x1b[0m";
 const BOLD = "\x1b[1m";
@@ -59,13 +60,16 @@ ${BOLD}Usage:${RESET}
   tracker list                            List all plans grouped by project
   tracker status <id> <status>            Update plan status (open|in-progress|completed|in-review)
   tracker work [id...]                    Start Claude Code on plans (interactive if no IDs)
+  tracker ui [port]                       Launch web dashboard (default port: 3847)
 
 ${BOLD}Examples:${RESET}
   tracker add ~/.claude/plans/my-plan.md /path/to/project
   tracker list
   tracker status 1 in-progress
   tracker work
-  tracker work 1 2`);
+  tracker work 1 2
+  tracker ui
+  tracker ui 8080`);
 }
 
 function cmdAdd(args: string[]) {
@@ -199,6 +203,45 @@ async function cmdWork(args: string[]) {
   }
 }
 
+function cmdUi(args: string[]) {
+  const port = args[0] ?? "3847";
+  const cliDir = dirname(new URL(import.meta.url).pathname);
+  const uiPkg = resolve(cliDir, "..", "..", "ui");
+  const serverPath = resolve(uiPkg, "server", "index.ts");
+  const distDir = resolve(uiPkg, "dist");
+
+  if (!existsSync(serverPath)) {
+    console.error(`${RED}Error: UI server not found at ${serverPath}${RESET}`);
+    process.exit(1);
+  }
+
+  // Build frontend if dist/ doesn't exist
+  if (!existsSync(distDir)) {
+    console.log(`${DIM}Building frontend...${RESET}`);
+    const build = spawnSync("bun", ["run", "build"], {
+      cwd: uiPkg,
+      stdio: "inherit",
+    });
+    if (build.exitCode !== 0) {
+      console.error(`${RED}Error: Frontend build failed${RESET}`);
+      process.exit(1);
+    }
+  }
+
+  const url = `http://localhost:${port}`;
+  console.log(`${BOLD}▶${RESET} Starting Task Tracker UI at ${CYAN}${url}${RESET}`);
+
+  // Open browser (macOS)
+  spawnSync("open", [url]);
+
+  // Run the server (foreground — keeps the process alive)
+  const server = spawnSync("bun", ["run", serverPath], {
+    env: { ...process.env, PORT: port },
+    stdio: "inherit",
+  });
+  process.exit(server.exitCode ?? 0);
+}
+
 // Main
 const [command, ...args] = process.argv.slice(2);
 
@@ -214,6 +257,9 @@ switch (command) {
     break;
   case "work":
     await cmdWork(args);
+    break;
+  case "ui":
+    cmdUi(args);
     break;
   case undefined:
   case "help":

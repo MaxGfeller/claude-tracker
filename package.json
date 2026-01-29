@@ -4,6 +4,8 @@
   "workspaces": ["packages/*"],
   "scripts": {
     "cli": "bun run packages/cli/src/cli.ts",
-    "link": "cd packages/cli && bun link && ln -sfn $(pwd)/../skills/skills/tracker-plan ~/.claude/skills/tracker-plan"
+    "link": "cd packages/cli && bun link && ln -sfn $(pwd)/../skills/skills/tracker-plan ~/.claude/skills/tracker-plan",
+    "ui": "bun run packages/ui/server/index.ts",
+    "ui:dev": "cd packages/ui && bun run dev"
   }
 }
