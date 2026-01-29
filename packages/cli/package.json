@@ -5,5 +5,8 @@
   "type": "module",
   "bin": {
     "tracker": "src/cli.ts"
+  },
+  "dependencies": {
+    "@inquirer/prompts": "^8.2.0"
   }
 }

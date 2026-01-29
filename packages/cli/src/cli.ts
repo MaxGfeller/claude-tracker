@@ -1,7 +1,9 @@
 #!/usr/bin/env bun
 
-import { addPlan, listPlans, updateStatus, type Plan } from "./db";
+import { addPlan, listPlans, updateStatus, getPlan, type Plan } from "./db";
 import { parsePlanTitle } from "./plans";
+import { startWork, startWorkMultiple } from "./work";
+import { selectPlans } from "./select";
 import { existsSync } from "fs";
 import { resolve } from "path";
 
@@ -12,6 +14,7 @@ const YELLOW = "\x1b[33m";
 const BLUE = "\x1b[34m";
 const GREEN = "\x1b[32m";
 const RED = "\x1b[31m";
+const CYAN = "\x1b[36m";
 
 function statusColor(status: string): string {
   switch (status) {
@@ -21,6 +24,8 @@ function statusColor(status: string): string {
       return BLUE;
     case "completed":
       return GREEN;
+    case "in-review":
+      return CYAN;
     default:
       return RESET;
   }
@@ -34,6 +39,8 @@ function statusIcon(status: string): string {
       return "◐";
     case "completed":
       return "●";
+    case "in-review":
+      return "◎";
     default:
       return "?";
   }
@@ -50,12 +57,15 @@ function printUsage() {
 ${BOLD}Usage:${RESET}
   tracker add <plan-path> <project-dir>   Register a plan
   tracker list                            List all plans grouped by project
-  tracker status <id> <status>            Update plan status (open|in-progress|completed)
+  tracker status <id> <status>            Update plan status (open|in-progress|completed|in-review)
+  tracker work [id...]                    Start Claude Code on plans (interactive if no IDs)
 
 ${BOLD}Examples:${RESET}
   tracker add ~/.claude/plans/my-plan.md /path/to/project
   tracker list
-  tracker status 1 in-progress`);
+  tracker status 1 in-progress
+  tracker work
+  tracker work 1 2`);
 }
 
 function cmdAdd(args: string[]) {
@@ -108,8 +118,9 @@ function cmdList() {
       const icon = statusIcon(p.status);
       const title = p.plan_title ?? "(untitled)";
       const date = formatDate(p.created_at);
+      const branchInfo = p.status === "in-review" && p.branch ? ` ${CYAN}${p.branch}${RESET}` : "";
       console.log(
-        `  ${color}${icon}${RESET} ${BOLD}#${p.id}${RESET} ${title} ${DIM}[${p.status}] ${date}${RESET}`
+        `  ${color}${icon}${RESET} ${BOLD}#${p.id}${RESET} ${title} ${DIM}[${p.status}] ${date}${RESET}${branchInfo}`
       );
     }
   }
@@ -145,6 +156,49 @@ function cmdStatus(args: string[]) {
   }
 }
 
+async function cmdWork(args: string[]) {
+  if (args.length > 0) {
+    // IDs provided directly
+    const plans: Plan[] = [];
+    for (const idStr of args) {
+      const id = parseInt(idStr, 10);
+      if (isNaN(id)) {
+        console.error(`${RED}Error: Invalid id "${idStr}"${RESET}`);
+        process.exit(1);
+      }
+      const plan = getPlan(id);
+      if (!plan) {
+        console.error(`${RED}Error: Plan #${id} not found${RESET}`);
+        process.exit(1);
+      }
+      plans.push(plan);
+    }
+    if (plans.length === 1) {
+      await startWork(plans[0]);
+    } else {
+      await startWorkMultiple(plans);
+    }
+  } else {
+    // Interactive selection
+    const allPlans = listPlans();
+    const openPlans = allPlans.filter((p) => p.status === "open");
+    if (openPlans.length === 0) {
+      console.log(`${DIM}No open plans available. Use "tracker add" to register a plan.${RESET}`);
+      return;
+    }
+    const selected = await selectPlans(allPlans);
+    if (selected.length === 0) {
+      console.log(`${DIM}No plans selected.${RESET}`);
+      return;
+    }
+    if (selected.length === 1) {
+      await startWork(selected[0]);
+    } else {
+      await startWorkMultiple(selected);
+    }
+  }
+}
+
 // Main
 const [command, ...args] = process.argv.slice(2);
 
@@ -157,6 +211,9 @@ switch (command) {
     break;
   case "status":
     cmdStatus(args);
+    break;
+  case "work":
+    await cmdWork(args);
     break;
   case undefined:
   case "help":

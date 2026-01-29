@@ -32,6 +32,12 @@ export function getDb(): Database {
     )
   `);
 
+  // Migration: add branch column if missing
+  const cols = _db.prepare("PRAGMA table_info(plans)").all() as { name: string }[];
+  if (!cols.some((c) => c.name === "branch")) {
+    _db.run("ALTER TABLE plans ADD COLUMN branch TEXT");
+  }
+
   return _db;
 }
 
@@ -42,6 +48,7 @@ export interface Plan {
   project_path: string;
   project_name: string | null;
   status: string;
+  branch: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -72,7 +79,7 @@ export function listPlans(): Plan[] {
 
 export function updateStatus(id: number, status: string): Plan | null {
   const db = getDb();
-  const valid = ["open", "in-progress", "completed"];
+  const valid = ["open", "in-progress", "completed", "in-review"];
   if (!valid.includes(status)) {
     throw new Error(`Invalid status "${status}". Must be one of: ${valid.join(", ")}`);
   }
@@ -82,6 +89,18 @@ export function updateStatus(id: number, status: string): Plan | null {
   `).run(status, id);
 
   return db.prepare("SELECT * FROM plans WHERE id = ?").get(id) as Plan | null;
+}
+
+export function getPlan(id: number): Plan | null {
+  const db = getDb();
+  return db.prepare("SELECT * FROM plans WHERE id = ?").get(id) as Plan | null;
+}
+
+export function updateBranch(id: number, branch: string): void {
+  const db = getDb();
+  db.prepare(`
+    UPDATE plans SET branch = ?, updated_at = datetime('now') WHERE id = ?
+  `).run(branch, id);
 }
 
 export function getPlansByProject(projectPath: string): Plan[] {
