@@ -1,0 +1,92 @@
+import { Database } from "bun:sqlite";
+import { mkdirSync, existsSync } from "fs";
+import { join } from "path";
+import { homedir } from "os";
+
+const DB_DIR = join(homedir(), ".local", "share", "task-tracker");
+const DB_PATH = join(DB_DIR, "plans.db");
+
+let _db: Database | null = null;
+
+export function getDb(): Database {
+  if (_db) return _db;
+
+  if (!existsSync(DB_DIR)) {
+    mkdirSync(DB_DIR, { recursive: true });
+  }
+
+  _db = new Database(DB_PATH);
+  _db.run("PRAGMA journal_mode = WAL");
+  _db.run("PRAGMA foreign_keys = ON");
+
+  _db.run(`
+    CREATE TABLE IF NOT EXISTS plans (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      plan_path TEXT NOT NULL,
+      plan_title TEXT,
+      project_path TEXT NOT NULL,
+      project_name TEXT,
+      status TEXT DEFAULT 'open',
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  return _db;
+}
+
+export interface Plan {
+  id: number;
+  plan_path: string;
+  plan_title: string | null;
+  project_path: string;
+  project_name: string | null;
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export function addPlan(
+  planPath: string,
+  projectPath: string,
+  planTitle?: string,
+  projectName?: string
+): Plan {
+  const db = getDb();
+  const name = projectName ?? projectPath.split("/").pop() ?? projectPath;
+
+  const stmt = db.prepare(`
+    INSERT INTO plans (plan_path, plan_title, project_path, project_name)
+    VALUES (?, ?, ?, ?)
+  `);
+  stmt.run(planPath, planTitle ?? null, projectPath, name);
+
+  const last = db.prepare("SELECT last_insert_rowid() as id").get() as { id: number };
+  return db.prepare("SELECT * FROM plans WHERE id = ?").get(last.id) as Plan;
+}
+
+export function listPlans(): Plan[] {
+  const db = getDb();
+  return db.prepare("SELECT * FROM plans ORDER BY project_name, created_at DESC").all() as Plan[];
+}
+
+export function updateStatus(id: number, status: string): Plan | null {
+  const db = getDb();
+  const valid = ["open", "in-progress", "completed"];
+  if (!valid.includes(status)) {
+    throw new Error(`Invalid status "${status}". Must be one of: ${valid.join(", ")}`);
+  }
+
+  db.prepare(`
+    UPDATE plans SET status = ?, updated_at = datetime('now') WHERE id = ?
+  `).run(status, id);
+
+  return db.prepare("SELECT * FROM plans WHERE id = ?").get(id) as Plan | null;
+}
+
+export function getPlansByProject(projectPath: string): Plan[] {
+  const db = getDb();
+  return db
+    .prepare("SELECT * FROM plans WHERE project_path = ? ORDER BY created_at DESC")
+    .all(projectPath) as Plan[];
+}
