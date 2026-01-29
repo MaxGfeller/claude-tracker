@@ -54,16 +54,28 @@ export async function startWork(plan: Plan): Promise<void> {
   console.log(`  ${DIM}Branch: ${branch}${RESET}`);
   console.log(`  ${DIM}Project: ${plan.project_path}${RESET}`);
 
-  // Create git branch
+  // Return to main branch before creating feature branch
   try {
-    const gitResult = Bun.spawnSync(["git", "checkout", "-b", branch], {
+    const mainResult = Bun.spawnSync(["git", "checkout", "main"], {
       cwd: plan.project_path,
       stdout: "pipe",
       stderr: "pipe",
     });
 
-    if (gitResult.exitCode !== 0) {
-      const stderr = gitResult.stderr.toString().trim();
+    if (mainResult.exitCode !== 0) {
+      const stderr = mainResult.stderr.toString().trim();
+      console.error(`${RED}✗${RESET} Failed to checkout main: ${stderr}`);
+      return;
+    }
+
+    const branchResult = Bun.spawnSync(["git", "checkout", "-b", branch], {
+      cwd: plan.project_path,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    if (branchResult.exitCode !== 0) {
+      const stderr = branchResult.stderr.toString().trim();
       console.error(`${RED}✗${RESET} Failed to create branch: ${stderr}`);
       return;
     }
@@ -143,8 +155,26 @@ export async function startWork(plan: Plan): Promise<void> {
   });
 }
 
+async function runProjectPlansSequentially(plans: Plan[]): Promise<void> {
+  for (const plan of plans) {
+    await startWork(plan);
+  }
+}
+
 export async function startWorkMultiple(plans: Plan[]): Promise<void> {
-  const results = await Promise.all(plans.map((p) => startWork(p)));
+  // Group plans by project — sequential within a project, parallel across projects
+  const byProject = new Map<string, Plan[]>();
+  for (const plan of plans) {
+    const key = plan.project_path;
+    if (!byProject.has(key)) byProject.set(key, []);
+    byProject.get(key)!.push(plan);
+  }
+
+  await Promise.all(
+    Array.from(byProject.values()).map((projectPlans) =>
+      runProjectPlansSequentially(projectPlans)
+    )
+  );
 
   console.log(`\n${BOLD}Summary:${RESET} ${plans.length} plan(s) processed`);
 }
