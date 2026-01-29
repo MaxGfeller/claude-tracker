@@ -17,7 +17,7 @@ When this skill is activated:
 
 3. **Register the plan** by executing:
    ```bash
-   bun run /Users/mg/projects/private/task-tracker/src/cli.ts add "<plan-file-path>" "<project-dir>"
+   tracker add "<plan-file-path>" "<project-dir>"
    ```
 
 4. **Report the result** to the user. Include the plan ID, title, and project name from the output.

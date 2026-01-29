@@ -1,0 +1,9 @@
+{
+  "name": "@tracker/cli",
+  "version": "0.1.0",
+  "description": "Task tracker CLI tool",
+  "type": "module",
+  "bin": {
+    "tracker": "src/cli.ts"
+  }
+}
