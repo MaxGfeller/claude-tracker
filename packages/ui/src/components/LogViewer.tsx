@@ -1,28 +1,128 @@
 import { useEffect, useRef } from "react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./ui/dialog";
-import { ScrollArea } from "./ui/scroll-area";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "./ui/dialog";
 import { useEventSource } from "../hooks/useEventSource";
 import { planLogsURL } from "../api";
 
-function parseLogLine(raw: string): string {
+interface LogEntry {
+  kind: "text" | "tool" | "tool_result" | "result" | "system";
+  content: string;
+  detail?: string;
+}
+
+function parseLogLine(raw: string): LogEntry | null {
   try {
     const obj = JSON.parse(raw);
-    // stream-json format from Claude Code
+
+    if (obj.type === "system") {
+      return null; // skip init messages
+    }
+
     if (obj.type === "assistant" && obj.message?.content) {
-      return obj.message.content
-        .filter((c: { type: string }) => c.type === "text")
-        .map((c: { text: string }) => c.text)
-        .join("");
+      const entries: LogEntry[] = [];
+      for (const c of obj.message.content) {
+        if (c.type === "text" && c.text?.trim()) {
+          entries.push({ kind: "text", content: c.text.trim() });
+        }
+        if (c.type === "tool_use") {
+          const name = c.name ?? "unknown";
+          const input = c.input ?? {};
+
+          if (name === "Write") {
+            entries.push({
+              kind: "tool",
+              content: `Write ${input.file_path ?? ""}`,
+              detail: input.content,
+            });
+          } else if (name === "Edit") {
+            const file = input.file_path ?? "";
+            const old_s: string = input.old_string ?? "";
+            const new_s: string = input.new_string ?? "";
+            const diffLines: string[] = [];
+            for (const l of old_s.split("\n")) diffLines.push(`- ${l}`);
+            for (const l of new_s.split("\n")) diffLines.push(`+ ${l}`);
+            entries.push({
+              kind: "tool",
+              content: `Edit ${file}`,
+              detail: diffLines.join("\n"),
+            });
+          } else if (name === "Bash") {
+            entries.push({
+              kind: "tool",
+              content: `Bash: ${input.command ?? ""}`,
+            });
+          } else if (name === "Read") {
+            entries.push({
+              kind: "tool",
+              content: `Read ${input.file_path ?? ""}`,
+            });
+          } else if (
+            name === "Glob" ||
+            name === "Grep"
+          ) {
+            entries.push({
+              kind: "tool",
+              content: `${name}: ${input.pattern ?? ""}`,
+            });
+          } else if (name === "TodoWrite") {
+            // skip todo noise
+          } else if (name === "Task") {
+            entries.push({
+              kind: "tool",
+              content: `Task: ${input.description ?? input.prompt?.slice(0, 80) ?? name}`,
+            });
+          } else {
+            entries.push({ kind: "tool", content: `${name}` });
+          }
+        }
+      }
+      // Return only the first meaningful entry per message;
+      // multi-content messages are sent as separate SSE events anyway
+      return entries[0] ?? null;
     }
-    if (obj.type === "result" && obj.result) {
-      return `[Result] ${obj.result}`;
+
+    if (obj.type === "user") {
+      const content = obj.message?.content;
+      if (Array.isArray(content)) {
+        for (const c of content) {
+          if (c.type === "tool_result") {
+            const text =
+              typeof c.content === "string"
+                ? c.content
+                : JSON.stringify(c.content ?? "");
+            // Only show short or interesting results
+            if (
+              text.includes("Error") ||
+              text.includes("error") ||
+              text.includes("created successfully") ||
+              text.includes("updated successfully")
+            ) {
+              return {
+                kind: "tool_result",
+                content: text.length > 300 ? text.slice(0, 300) + "..." : text,
+              };
+            }
+            return null; // skip verbose tool results
+          }
+        }
+      }
+      return null;
     }
-    if (obj.content) {
-      return typeof obj.content === "string" ? obj.content : JSON.stringify(obj.content);
+
+    if (obj.type === "result") {
+      return {
+        kind: "result",
+        content: obj.result ?? (obj.is_error ? "Session ended with error" : "Session complete"),
+      };
     }
-    return raw;
+
+    return null;
   } catch {
-    return raw;
+    return null;
   }
 }
 
@@ -33,19 +133,29 @@ interface LogViewerProps {
   onClose: () => void;
 }
 
-export function LogViewer({ planId, planTitle, open, onClose }: LogViewerProps) {
+export function LogViewer({
+  planId,
+  planTitle,
+  open,
+  onClose,
+}: LogViewerProps) {
   const url = open ? planLogsURL(planId) : null;
   const { lines, connected } = useEventSource(url);
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  const entries = lines
+    .map(parseLogLine)
+    .filter((e): e is LogEntry => e !== null);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [lines]);
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [entries.length]);
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-w-3xl h-[70vh] flex flex-col">
-        <DialogHeader>
+      <DialogContent className="!max-w-[90vw] w-[1100px] h-[85vh] flex flex-col gap-0 p-0 overflow-hidden">
+        <DialogHeader className="px-6 py-4 border-b shrink-0">
           <DialogTitle className="flex items-center gap-2">
             Logs: {planTitle}
             <span
@@ -55,18 +165,70 @@ export function LogViewer({ planId, planTitle, open, onClose }: LogViewerProps) 
             />
           </DialogTitle>
         </DialogHeader>
-        <ScrollArea className="flex-1 rounded-md border bg-zinc-950 p-4 font-mono text-sm text-green-400">
-          <div className="whitespace-pre-wrap break-words">
-            {lines.length === 0 && (
-              <span className="text-muted-foreground">Waiting for log output...</span>
-            )}
-            {lines.map((line, i) => (
-              <div key={i}>{parseLogLine(line)}</div>
-            ))}
-            <div ref={bottomRef} />
-          </div>
-        </ScrollArea>
+        <div
+          ref={scrollRef}
+          className="flex-1 overflow-y-auto bg-zinc-950 px-5 py-4 font-mono text-sm"
+        >
+          {entries.length === 0 && (
+            <span className="text-zinc-500">Waiting for log output...</span>
+          )}
+          {entries.map((entry, i) => (
+            <LogEntryView key={i} entry={entry} />
+          ))}
+        </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function LogEntryView({ entry }: { entry: LogEntry }) {
+  switch (entry.kind) {
+    case "text":
+      return (
+        <div className="text-zinc-200 my-3 leading-relaxed whitespace-pre-wrap">
+          {entry.content}
+        </div>
+      );
+    case "tool":
+      return (
+        <div className="my-2">
+          <div className="text-blue-400 text-xs">
+            {entry.content}
+          </div>
+          {entry.detail && <DiffBlock text={entry.detail} />}
+        </div>
+      );
+    case "tool_result":
+      return (
+        <div className="text-zinc-500 text-xs my-1 whitespace-pre-wrap">
+          {entry.content}
+        </div>
+      );
+    case "result":
+      return (
+        <div className="my-4 border-t border-zinc-800 pt-4 text-green-400 whitespace-pre-wrap">
+          {entry.content}
+        </div>
+      );
+    default:
+      return null;
+  }
+}
+
+function DiffBlock({ text }: { text: string }) {
+  const lines = text.split("\n");
+  return (
+    <pre className="mt-1 text-xs leading-relaxed overflow-x-auto rounded bg-zinc-900 px-3 py-2 border border-zinc-800">
+      {lines.map((line, i) => {
+        let cls = "text-zinc-400";
+        if (line.startsWith("+")) cls = "text-green-400";
+        else if (line.startsWith("-")) cls = "text-red-400";
+        return (
+          <div key={i} className={cls}>
+            {line}
+          </div>
+        );
+      })}
+    </pre>
   );
 }
