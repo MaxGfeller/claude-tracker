@@ -3,9 +3,10 @@ import { randomUUID } from "crypto";
 import { readFileSync, mkdirSync, existsSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
-import { spawn } from "child_process";
+import { spawn, execSync } from "child_process";
 
 const LOGS_DIR = join(homedir(), ".local", "share", "task-tracker", "logs");
+const MAX_REVIEW_ROUNDS = 5;
 
 const RESET = "\x1b[0m";
 const BOLD = "\x1b[1m";
@@ -13,6 +14,7 @@ const DIM = "\x1b[2m";
 const YELLOW = "\x1b[33m";
 const GREEN = "\x1b[32m";
 const RED = "\x1b[31m";
+const CYAN = "\x1b[36m";
 
 export function slugify(title: string): string {
   return title
@@ -22,6 +24,8 @@ export function slugify(title: string): string {
     .replace(/^-|-$/g, "")
     .slice(0, 50);
 }
+
+type Writer = ReturnType<ReturnType<typeof Bun.file>["writer"]>;
 
 function buildPrompt(planContent: string): string {
   return `You are implementing a plan. Here is the full plan content:
@@ -36,6 +40,180 @@ Instructions:
 3. If needed, add temporary test scripts to verify new functionality works correctly.
 4. When all changes are complete and verified, commit all changes with an appropriate commit message.
 5. Do not push to a remote — just commit locally.`;
+}
+
+function buildReviewPrompt(planContent: string, diff: string): string {
+  return `You are a code reviewer. You are reviewing changes made by another Claude Code agent.
+
+<plan>
+${planContent}
+</plan>
+
+<diff>
+${diff}
+</diff>
+
+Review the changes against the plan. Check for:
+1. Completeness — does the diff implement the full plan?
+2. Correctness — any bugs, logic errors, or missed edge cases?
+3. Code quality — clean code, no leftover debug statements, follows project conventions?
+
+If everything looks good, approve. If there are issues, describe each clearly.
+
+End your response with exactly one of:
+<verdict>APPROVE</verdict>
+<verdict>REQUEST_CHANGES</verdict>`;
+}
+
+function buildRevisionPrompt(feedback: string): string {
+  return `A code reviewer has reviewed your changes and requested revisions:
+
+<review_feedback>
+${feedback}
+</review_feedback>
+
+Please address all the reviewer's feedback. When done, commit the changes.`;
+}
+
+function parseVerdict(output: string): { approved: boolean; feedback: string } {
+  const regex = /<verdict>(APPROVE|REQUEST_CHANGES)<\/verdict>/g;
+  let lastMatch: RegExpExecArray | null = null;
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(output)) !== null) {
+    lastMatch = match;
+  }
+  if (!lastMatch) {
+    return { approved: false, feedback: output };
+  }
+  return {
+    approved: lastMatch[1] === "APPROVE",
+    feedback: output,
+  };
+}
+
+function spawnClaude(opts: {
+  args: string[];
+  cwd: string;
+  logWriter: Writer;
+}): Promise<{ code: number; output: string }> {
+  return new Promise((resolve) => {
+    const child = spawn("claude", opts.args, {
+      cwd: opts.cwd,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env },
+    });
+
+    let output = "";
+
+    child.stdout.on("data", (data: Buffer) => {
+      const text = data.toString();
+      process.stdout.write(text);
+      opts.logWriter.write(text);
+      output += text;
+    });
+
+    child.stderr.on("data", (data: Buffer) => {
+      const text = data.toString();
+      process.stderr.write(text);
+      opts.logWriter.write(text);
+    });
+
+    child.on("close", (code) => {
+      resolve({ code: code ?? 1, output });
+    });
+  });
+}
+
+async function runReviewLoop(
+  plan: Plan,
+  planContent: string,
+  sessionId: string,
+  logWriter: Writer
+): Promise<void> {
+  for (let round = 1; round <= MAX_REVIEW_ROUNDS; round++) {
+    console.log(
+      `\n${CYAN}🔍${RESET} Review round ${BOLD}${round}/${MAX_REVIEW_ROUNDS}${RESET} — spawning reviewer...`
+    );
+
+    // Get diff against main
+    let diff: string;
+    try {
+      diff = execSync("git diff main...HEAD", {
+        cwd: plan.project_path,
+        encoding: "utf-8",
+        maxBuffer: 10 * 1024 * 1024,
+      });
+    } catch {
+      console.error(`${RED}✗${RESET} Failed to get git diff — skipping review`);
+      return;
+    }
+
+    if (!diff.trim()) {
+      console.log(`${YELLOW}⚠${RESET} No diff found against main — skipping review`);
+      return;
+    }
+
+    // Spawn reviewer
+    const reviewPrompt = buildReviewPrompt(planContent, diff);
+    const reviewResult = await spawnClaude({
+      args: [
+        "-p",
+        reviewPrompt,
+        "--dangerously-skip-permissions",
+        "--verbose",
+        "--output-format",
+        "stream-json",
+      ],
+      cwd: plan.project_path,
+      logWriter,
+    });
+
+    if (reviewResult.code !== 0) {
+      console.error(`${RED}✗${RESET} Reviewer exited with code ${reviewResult.code} — skipping review`);
+      return;
+    }
+
+    const verdict = parseVerdict(reviewResult.output);
+
+    if (verdict.approved) {
+      console.log(
+        `\n${GREEN}✓${RESET} Reviewer ${BOLD}approved${RESET} — setting status to ${GREEN}in-review${RESET}`
+      );
+      return;
+    }
+
+    console.log(
+      `\n${YELLOW}↻${RESET} Reviewer requested changes — resuming worker session...`
+    );
+
+    // Resume worker with feedback
+    const revisionPrompt = buildRevisionPrompt(verdict.feedback);
+    const workerResult = await spawnClaude({
+      args: [
+        "--resume",
+        sessionId,
+        "-p",
+        revisionPrompt,
+        "--dangerously-skip-permissions",
+        "--verbose",
+        "--output-format",
+        "stream-json",
+      ],
+      cwd: plan.project_path,
+      logWriter,
+    });
+
+    if (workerResult.code !== 0) {
+      console.error(
+        `${RED}✗${RESET} Worker exited with code ${workerResult.code} during revision — stopping review loop`
+      );
+      return;
+    }
+  }
+
+  console.log(
+    `\n${YELLOW}⚠${RESET} Max review rounds (${MAX_REVIEW_ROUNDS}) reached — setting status to ${GREEN}in-review${RESET}`
+  );
 }
 
 export async function startWork(plan: Plan): Promise<void> {
@@ -112,50 +290,44 @@ export async function startWork(plan: Plan): Promise<void> {
 
   const prompt = buildPrompt(planContent);
 
-  // Invoke claude
-  return new Promise<void>((resolve) => {
-    const child = spawn(
-      "claude",
-      ["-p", prompt, "--session-id", sessionId, "--dangerously-skip-permissions", "--verbose", "--output-format", "stream-json"],
-      {
-        cwd: plan.project_path,
-        stdio: ["ignore", "pipe", "pipe"],
-        env: { ...process.env },
-      }
+  const logFile = Bun.file(logPath);
+  const logWriter = logFile.writer();
+
+  // Invoke worker claude
+  const workerResult = await spawnClaude({
+    args: [
+      "-p",
+      prompt,
+      "--session-id",
+      sessionId,
+      "--dangerously-skip-permissions",
+      "--verbose",
+      "--output-format",
+      "stream-json",
+    ],
+    cwd: plan.project_path,
+    logWriter,
+  });
+
+  if (workerResult.code === 0) {
+    console.log(
+      `\n${GREEN}✓${RESET} Plan ${BOLD}#${plan.id}${RESET} worker completed — starting review loop`
     );
 
-    const logFile = Bun.file(logPath);
-    const logWriter = logFile.writer();
+    await runReviewLoop(plan, planContent, sessionId, logWriter);
 
-    child.stdout.on("data", (data: Buffer) => {
-      const text = data.toString();
-      process.stdout.write(text);
-      logWriter.write(text);
-    });
+    updateStatus(plan.id, "in-review");
+    console.log(
+      `\n${GREEN}✓${RESET} Plan ${BOLD}#${plan.id}${RESET} — status set to ${GREEN}in-review${RESET}`
+    );
+  } else {
+    console.error(
+      `\n${RED}✗${RESET} Plan ${BOLD}#${plan.id}${RESET} exited with code ${workerResult.code} — status remains ${YELLOW}in-progress${RESET}`
+    );
+  }
 
-    child.stderr.on("data", (data: Buffer) => {
-      const text = data.toString();
-      process.stderr.write(text);
-      logWriter.write(text);
-    });
-
-    child.on("close", (code) => {
-      logWriter.flush();
-      logWriter.end();
-
-      if (code === 0) {
-        updateStatus(plan.id, "in-review");
-        console.log(
-          `\n${GREEN}✓${RESET} Plan ${BOLD}#${plan.id}${RESET} completed — status set to ${GREEN}in-review${RESET}`
-        );
-      } else {
-        console.error(
-          `\n${RED}✗${RESET} Plan ${BOLD}#${plan.id}${RESET} exited with code ${code} — status remains ${YELLOW}in-progress${RESET}`
-        );
-      }
-      resolve();
-    });
-  });
+  logWriter.flush();
+  logWriter.end();
 }
 
 async function runProjectPlansSequentially(plans: Plan[]): Promise<void> {
