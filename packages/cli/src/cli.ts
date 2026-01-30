@@ -7,6 +7,7 @@ import { selectPlans } from "./select";
 import { existsSync } from "fs";
 import { resolve, dirname } from "path";
 import { spawnSync } from "child_process";
+import { confirm } from "@inquirer/prompts";
 
 const RESET = "\x1b[0m";
 const BOLD = "\x1b[1m";
@@ -292,7 +293,7 @@ function planIdFromBranch(): number | null {
   return match ? parseInt(match[1], 10) : null;
 }
 
-function cmdComplete(args: string[]) {
+async function cmdComplete(args: string[]) {
   let idStr = args[0];
 
   // If no ID given, try to derive from the current branch
@@ -340,42 +341,33 @@ function cmdComplete(args: string[]) {
   // Check for uncommitted changes
   const status = git(["status", "--porcelain"], cwd);
   if (status.stdout) {
-    console.error(`${RED}✗${RESET} Working directory has uncommitted changes. Please commit or stash first.`);
-    process.exit(1);
+    console.log(`${YELLOW}⚠${RESET} Working directory has uncommitted changes:\n`);
+    console.log(`${DIM}${status.stdout.trim()}${RESET}\n`);
+    const proceed = await confirm({
+      message: "Continue anyway? Uncommitted changes may interfere with the merge.",
+      default: false,
+    });
+    if (!proceed) {
+      console.log(`${DIM}Aborted.${RESET}`);
+      return;
+    }
   }
-
-  // Checkout the feature branch
-  let result = git(["checkout", branch], cwd);
-  if (!result.ok) {
-    console.error(`${RED}✗${RESET} Failed to checkout ${branch}: ${result.stderr}`);
-    process.exit(1);
-  }
-  console.log(`  Checked out ${CYAN}${branch}${RESET}`);
 
   // Fetch latest main
   git(["fetch", "origin", "main"], cwd); // best-effort, may fail if no remote
 
-  // Rebase onto main to check for conflicts
-  result = git(["rebase", "main"], cwd);
-  if (!result.ok) {
-    console.error(`${RED}✗${RESET} Rebase onto main failed — there are conflicts:\n${result.stderr}`);
-    console.error(`\n${DIM}Aborting rebase. Resolve conflicts manually, then re-run this command.${RESET}`);
-    git(["rebase", "--abort"], cwd);
-    process.exit(1);
-  }
-  console.log(`  Rebased onto ${CYAN}main${RESET} — no conflicts`);
-
   // Checkout main
-  result = git(["checkout", "main"], cwd);
+  let result = git(["checkout", "main"], cwd);
   if (!result.ok) {
     console.error(`${RED}✗${RESET} Failed to checkout main: ${result.stderr}`);
     process.exit(1);
   }
 
-  // Merge feature branch (fast-forward after rebase)
-  result = git(["merge", "--ff-only", branch], cwd);
+  // Merge feature branch into main
+  result = git(["merge", branch, "-m", `Merge branch '${branch}'`], cwd);
   if (!result.ok) {
-    console.error(`${RED}✗${RESET} Fast-forward merge failed: ${result.stderr}`);
+    console.error(`${RED}✗${RESET} Merge failed — there may be conflicts:\n${result.stderr}`);
+    console.error(`\n${DIM}Resolve conflicts manually, then re-run this command.${RESET}`);
     process.exit(1);
   }
   console.log(`  Merged ${CYAN}${branch}${RESET} into ${CYAN}main${RESET}`);
@@ -444,7 +436,7 @@ switch (command) {
     cmdCheckout(args);
     break;
   case "complete":
-    cmdComplete(args);
+    await cmdComplete(args);
     break;
   case "ui":
     cmdUi(args);
