@@ -60,6 +60,7 @@ ${BOLD}Usage:${RESET}
   tracker list                            List all plans grouped by project
   tracker status <id> <status>            Update plan status (open|in-progress|completed|in-review)
   tracker work [id...]                    Start Claude Code on plans (interactive if no IDs)
+  tracker checkout <id>                   Checkout plan branch and resume Claude Code conversation
   tracker ui [port]                       Launch web dashboard (default port: 3847)
 
 ${BOLD}Examples:${RESET}
@@ -68,6 +69,7 @@ ${BOLD}Examples:${RESET}
   tracker status 1 in-progress
   tracker work
   tracker work 1 2
+  tracker checkout 3
   tracker ui
   tracker ui 8080`);
 }
@@ -203,6 +205,67 @@ async function cmdWork(args: string[]) {
   }
 }
 
+function cmdCheckout(args: string[]) {
+  const idStr = args[0];
+  if (!idStr) {
+    console.error(`${RED}Error: checkout requires a plan <id>${RESET}`);
+    process.exit(1);
+  }
+
+  const id = parseInt(idStr, 10);
+  if (isNaN(id)) {
+    console.error(`${RED}Error: Invalid id "${idStr}"${RESET}`);
+    process.exit(1);
+  }
+
+  const plan = getPlan(id);
+  if (!plan) {
+    console.error(`${RED}Error: Plan #${id} not found${RESET}`);
+    process.exit(1);
+  }
+
+  if (!plan.branch) {
+    console.error(`${RED}Error: Plan #${id} has no branch — it may not have been worked on yet${RESET}`);
+    process.exit(1);
+  }
+
+  if (!plan.session_id) {
+    console.error(`${RED}Error: Plan #${id} has no session ID — it was started before session tracking was added${RESET}`);
+    process.exit(1);
+  }
+
+  console.log(
+    `${BOLD}▶${RESET} Checking out plan ${BOLD}#${plan.id}${RESET}: ${plan.plan_title ?? "(untitled)"}`
+  );
+  console.log(`  ${DIM}Branch:  ${plan.branch}${RESET}`);
+  console.log(`  ${DIM}Session: ${plan.session_id}${RESET}`);
+  console.log(`  ${DIM}Project: ${plan.project_path}${RESET}`);
+
+  // Checkout the branch
+  const result = Bun.spawnSync(["git", "checkout", plan.branch], {
+    cwd: plan.project_path,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  if (result.exitCode !== 0) {
+    const stderr = result.stderr.toString().trim();
+    console.error(`${RED}✗${RESET} Failed to checkout branch: ${stderr}`);
+    process.exit(1);
+  }
+
+  console.log(`${GREEN}✓${RESET} On branch ${CYAN}${plan.branch}${RESET}`);
+  console.log(`\n${DIM}Resuming Claude Code conversation...${RESET}\n`);
+
+  // Resume Claude Code conversation by session ID
+  const claude = spawnSync("claude", ["--resume", plan.session_id], {
+    cwd: plan.project_path,
+    stdio: "inherit",
+  });
+
+  process.exit(claude.exitCode ?? 0);
+}
+
 function cmdUi(args: string[]) {
   const port = args[0] ?? "3847";
   const cliDir = dirname(new URL(import.meta.url).pathname);
@@ -257,6 +320,9 @@ switch (command) {
     break;
   case "work":
     await cmdWork(args);
+    break;
+  case "checkout":
+    cmdCheckout(args);
     break;
   case "ui":
     cmdUi(args);

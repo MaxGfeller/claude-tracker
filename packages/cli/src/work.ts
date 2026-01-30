@@ -1,4 +1,5 @@
-import { type Plan, updateStatus, updateBranch } from "./db";
+import { type Plan, updateStatus, updateBranch, updateSessionId } from "./db";
+import { randomUUID } from "crypto";
 import { readFileSync, mkdirSync, existsSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
@@ -87,6 +88,8 @@ export async function startWork(plan: Plan): Promise<void> {
   // Update DB
   updateStatus(plan.id, "in-progress");
   updateBranch(plan.id, branch);
+  const sessionId = randomUUID();
+  updateSessionId(plan.id, sessionId);
 
   // Read plan content
   let planContent: string;
@@ -113,7 +116,7 @@ export async function startWork(plan: Plan): Promise<void> {
   return new Promise<void>((resolve) => {
     const child = spawn(
       "claude",
-      ["-p", prompt, "--dangerously-skip-permissions", "--verbose", "--output-format", "stream-json"],
+      ["-p", prompt, "--session-id", sessionId, "--dangerously-skip-permissions", "--verbose", "--output-format", "stream-json"],
       {
         cwd: plan.project_path,
         stdio: ["ignore", "pipe", "pipe"],

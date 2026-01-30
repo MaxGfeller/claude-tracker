@@ -32,10 +32,13 @@ export function getDb(): Database {
     )
   `);
 
-  // Migration: add branch column if missing
+  // Migrations: add columns if missing
   const cols = _db.prepare("PRAGMA table_info(plans)").all() as { name: string }[];
   if (!cols.some((c) => c.name === "branch")) {
     _db.run("ALTER TABLE plans ADD COLUMN branch TEXT");
+  }
+  if (!cols.some((c) => c.name === "session_id")) {
+    _db.run("ALTER TABLE plans ADD COLUMN session_id TEXT");
   }
 
   return _db;
@@ -49,6 +52,7 @@ export interface Plan {
   project_name: string | null;
   status: string;
   branch: string | null;
+  session_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -101,6 +105,13 @@ export function updateBranch(id: number, branch: string): void {
   db.prepare(`
     UPDATE plans SET branch = ?, updated_at = datetime('now') WHERE id = ?
   `).run(branch, id);
+}
+
+export function updateSessionId(id: number, sessionId: string): void {
+  const db = getDb();
+  db.prepare(`
+    UPDATE plans SET session_id = ?, updated_at = datetime('now') WHERE id = ?
+  `).run(sessionId, id);
 }
 
 export function getPlansByProject(projectPath: string): Plan[] {
