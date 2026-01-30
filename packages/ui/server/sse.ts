@@ -34,15 +34,15 @@ export function handleSSELogs(planId: number): Response {
       }
 
       function streamFile(filePath: string) {
-        // Read existing content
-        let offset = 0;
+        // Read existing content — track character offset for reliable slicing
+        let charOffset = 0;
         try {
           const content = readFileSync(filePath, "utf-8");
           const lines = content.split("\n").filter((l) => l.trim());
           for (const line of lines) {
             send("log", line);
           }
-          offset = Buffer.byteLength(content, "utf-8");
+          charOffset = content.length;
         } catch {
           // file may not be readable yet
         }
@@ -52,16 +52,13 @@ export function handleSSELogs(planId: number): Response {
           watcher = watch(filePath, () => {
             try {
               const content = readFileSync(filePath, "utf-8");
-              const bytes = Buffer.byteLength(content, "utf-8");
-              if (bytes > offset) {
-                const newContent = content.slice(
-                  Buffer.from(content).slice(0, offset).toString().length
-                );
+              if (content.length > charOffset) {
+                const newContent = content.slice(charOffset);
                 const newLines = newContent.split("\n").filter((l) => l.trim());
                 for (const line of newLines) {
                   send("log", line);
                 }
-                offset = bytes;
+                charOffset = content.length;
               }
             } catch {
               // ignore read errors during watch
