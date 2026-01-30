@@ -61,6 +61,7 @@ ${BOLD}Usage:${RESET}
   tracker status <id> <status>            Update plan status (open|in-progress|completed|in-review)
   tracker work [id...]                    Start Claude Code on plans (interactive if no IDs)
   tracker checkout <id>                   Checkout plan branch and resume Claude Code conversation
+  tracker complete [id]                   Merge plan branch into main and mark completed
   tracker ui [port]                       Launch web dashboard (default port: 3847)
 
 ${BOLD}Examples:${RESET}
@@ -70,6 +71,7 @@ ${BOLD}Examples:${RESET}
   tracker work
   tracker work 1 2
   tracker checkout 3
+  tracker complete 3
   tracker ui
   tracker ui 8080`);
 }
@@ -266,6 +268,123 @@ function cmdCheckout(args: string[]) {
   process.exit(claude.exitCode ?? 0);
 }
 
+function git(args: string[], cwd: string): { ok: boolean; stdout: string; stderr: string } {
+  const result = Bun.spawnSync(["git", ...args], {
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  return {
+    ok: result.exitCode === 0,
+    stdout: result.stdout.toString().trim(),
+    stderr: result.stderr.toString().trim(),
+  };
+}
+
+function planIdFromBranch(): number | null {
+  const result = Bun.spawnSync(["git", "rev-parse", "--abbrev-ref", "HEAD"], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  if (result.exitCode !== 0) return null;
+  const branch = result.stdout.toString().trim();
+  const match = branch.match(/^plan\/(\d+)-/);
+  return match ? parseInt(match[1], 10) : null;
+}
+
+function cmdComplete(args: string[]) {
+  let idStr = args[0];
+
+  // If no ID given, try to derive from the current branch
+  if (!idStr) {
+    const branchId = planIdFromBranch();
+    if (branchId === null) {
+      console.error(`${RED}Error: No plan ID provided and current branch is not a plan branch (plan/<id>-...)${RESET}`);
+      process.exit(1);
+    }
+    idStr = String(branchId);
+    console.log(`${DIM}Detected plan #${idStr} from current branch${RESET}`);
+  }
+
+  const id = parseInt(idStr, 10);
+  if (isNaN(id)) {
+    console.error(`${RED}Error: Invalid id "${idStr}"${RESET}`);
+    process.exit(1);
+  }
+
+  const plan = getPlan(id);
+  if (!plan) {
+    console.error(`${RED}Error: Plan #${id} not found${RESET}`);
+    process.exit(1);
+  }
+
+  if (!plan.branch) {
+    console.error(`${RED}Error: Plan #${id} has no branch${RESET}`);
+    process.exit(1);
+  }
+
+  if (plan.status === "completed") {
+    console.log(`${DIM}Plan #${id} is already completed.${RESET}`);
+    return;
+  }
+
+  const cwd = plan.project_path;
+  const branch = plan.branch;
+
+  console.log(
+    `${BOLD}▶${RESET} Completing plan ${BOLD}#${plan.id}${RESET}: ${plan.plan_title ?? "(untitled)"}`
+  );
+  console.log(`  ${DIM}Branch:  ${branch}${RESET}`);
+  console.log(`  ${DIM}Project: ${cwd}${RESET}\n`);
+
+  // Check for uncommitted changes
+  const status = git(["status", "--porcelain"], cwd);
+  if (status.stdout) {
+    console.error(`${RED}✗${RESET} Working directory has uncommitted changes. Please commit or stash first.`);
+    process.exit(1);
+  }
+
+  // Checkout the feature branch
+  let result = git(["checkout", branch], cwd);
+  if (!result.ok) {
+    console.error(`${RED}✗${RESET} Failed to checkout ${branch}: ${result.stderr}`);
+    process.exit(1);
+  }
+  console.log(`  Checked out ${CYAN}${branch}${RESET}`);
+
+  // Fetch latest main
+  git(["fetch", "origin", "main"], cwd); // best-effort, may fail if no remote
+
+  // Rebase onto main to check for conflicts
+  result = git(["rebase", "main"], cwd);
+  if (!result.ok) {
+    console.error(`${RED}✗${RESET} Rebase onto main failed — there are conflicts:\n${result.stderr}`);
+    console.error(`\n${DIM}Aborting rebase. Resolve conflicts manually, then re-run this command.${RESET}`);
+    git(["rebase", "--abort"], cwd);
+    process.exit(1);
+  }
+  console.log(`  Rebased onto ${CYAN}main${RESET} — no conflicts`);
+
+  // Checkout main
+  result = git(["checkout", "main"], cwd);
+  if (!result.ok) {
+    console.error(`${RED}✗${RESET} Failed to checkout main: ${result.stderr}`);
+    process.exit(1);
+  }
+
+  // Merge feature branch (fast-forward after rebase)
+  result = git(["merge", "--ff-only", branch], cwd);
+  if (!result.ok) {
+    console.error(`${RED}✗${RESET} Fast-forward merge failed: ${result.stderr}`);
+    process.exit(1);
+  }
+  console.log(`  Merged ${CYAN}${branch}${RESET} into ${CYAN}main${RESET}`);
+
+  // Update status in DB
+  updateStatus(plan.id, "completed");
+  console.log(`\n${GREEN}✓${RESET} Plan ${BOLD}#${plan.id}${RESET} → ${GREEN}completed${RESET}`);
+}
+
 function cmdUi(args: string[]) {
   const port = args[0] ?? "3847";
   const cliDir = dirname(new URL(import.meta.url).pathname);
@@ -323,6 +442,9 @@ switch (command) {
     break;
   case "checkout":
     cmdCheckout(args);
+    break;
+  case "complete":
+    cmdComplete(args);
     break;
   case "ui":
     cmdUi(args);
