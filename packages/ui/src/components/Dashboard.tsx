@@ -1,8 +1,19 @@
 import { usePlans } from "../hooks/usePlans";
-import { ProjectGroup } from "./ProjectGroup";
+import { KanbanColumn } from "./KanbanColumn";
 import type { Plan } from "../api";
 
-export function Dashboard() {
+const COLUMNS = [
+  { title: "Open", status: "open" },
+  { title: "In Progress", status: "in-progress" },
+  { title: "In Review", status: "in-review" },
+  { title: "Completed", status: "completed" },
+] as const;
+
+interface DashboardProps {
+  showCompleted: boolean;
+}
+
+export function Dashboard({ showCompleted }: DashboardProps) {
   const { plans, loading, refresh } = usePlans();
 
   if (loading) {
@@ -21,28 +32,24 @@ export function Dashboard() {
     );
   }
 
-  // Group by project
-  const grouped = new Map<string, { name: string; path: string; plans: Plan[] }>();
+  const grouped = new Map<string, Plan[]>();
+  for (const col of COLUMNS) {
+    grouped.set(col.status, []);
+  }
   for (const plan of plans) {
-    const key = plan.project_path;
-    if (!grouped.has(key)) {
-      grouped.set(key, {
-        name: plan.project_name ?? plan.project_path.split("/").pop() ?? key,
-        path: plan.project_path,
-        plans: [],
-      });
-    }
-    grouped.get(key)!.plans.push(plan);
+    const bucket = grouped.get(plan.status);
+    if (bucket) bucket.push(plan);
   }
 
+  const columns = showCompleted ? COLUMNS : COLUMNS.filter((c) => c.status !== "completed");
+
   return (
-    <div className="space-y-8">
-      {Array.from(grouped.values()).map((group) => (
-        <ProjectGroup
-          key={group.path}
-          name={group.name}
-          path={group.path}
-          plans={group.plans}
+    <div className="flex gap-4 h-full overflow-x-auto">
+      {columns.map((col) => (
+        <KanbanColumn
+          key={col.status}
+          title={col.title}
+          plans={grouped.get(col.status) ?? []}
           onRefresh={refresh}
         />
       ))}

@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { Card, CardContent } from "./ui/card";
 import { Button } from "./ui/button";
-import { StatusBadge } from "./StatusBadge";
 import { LogViewer } from "./LogViewer";
 import { startPlanWork, type Plan } from "../api";
 
@@ -30,31 +29,30 @@ export function PlanCard({ plan, onRefresh }: PlanCardProps) {
   const canStart = plan.status === "open";
   const canViewLogs = plan.status === "in-progress" || plan.status === "in-review";
   const title = plan.plan_title ?? "(untitled)";
+  const projectName = plan.project_name ?? plan.project_path.split("/").pop() ?? plan.project_path;
 
   return (
     <>
       <Card>
-        <CardContent className="flex items-center justify-between gap-4 py-3 px-4">
-          <div className="flex flex-col gap-1 min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-muted-foreground text-sm font-mono">#{plan.id}</span>
-              <span className="font-medium truncate">{title}</span>
-              <StatusBadge status={plan.status} />
-            </div>
-            {plan.branch && (
-              <span className="text-xs text-muted-foreground font-mono truncate">
-                {plan.branch}
-              </span>
-            )}
+        <CardContent className="flex flex-col gap-2 py-3 px-3">
+          <div className="flex items-center gap-2">
+            <span className="text-muted-foreground text-xs font-mono">#{plan.id}</span>
+            <span className="text-xs text-muted-foreground truncate">{projectName}</span>
           </div>
-          <div className="flex gap-2 shrink-0">
+          <span className="font-medium text-sm leading-snug">{title}</span>
+          {plan.branch && (
+            <span className="text-xs text-muted-foreground font-mono truncate">
+              {plan.branch}
+            </span>
+          )}
+          <div className="flex gap-2 mt-1">
             {canStart && (
-              <Button size="sm" onClick={handleStartWork} disabled={starting}>
+              <Button size="sm" className="h-7 text-xs" onClick={handleStartWork} disabled={starting}>
                 {starting ? "Starting..." : "Start Work"}
               </Button>
             )}
             {canViewLogs && (
-              <Button size="sm" variant="outline" onClick={() => setLogOpen(true)}>
+              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setLogOpen(true)}>
                 View Logs
               </Button>
             )}
