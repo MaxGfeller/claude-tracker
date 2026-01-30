@@ -356,18 +356,34 @@ async function cmdComplete(args: string[]) {
   // Fetch latest main
   git(["fetch", "origin", "main"], cwd); // best-effort, may fail if no remote
 
+  // Checkout the feature branch
+  let result = git(["checkout", branch], cwd);
+  if (!result.ok) {
+    console.error(`${RED}✗${RESET} Failed to checkout ${branch}: ${result.stderr}`);
+    process.exit(1);
+  }
+  console.log(`  Checked out ${CYAN}${branch}${RESET}`);
+
+  // Merge main into feature branch (resolve conflicts here)
+  result = git(["merge", "main"], cwd);
+  if (!result.ok) {
+    console.error(`${RED}✗${RESET} Merge main into ${branch} failed — there may be conflicts:\n${result.stderr}`);
+    console.error(`\n${DIM}Resolve conflicts on this branch, commit, then re-run this command.${RESET}`);
+    process.exit(1);
+  }
+  console.log(`  Merged ${CYAN}main${RESET} into ${CYAN}${branch}${RESET}`);
+
   // Checkout main
-  let result = git(["checkout", "main"], cwd);
+  result = git(["checkout", "main"], cwd);
   if (!result.ok) {
     console.error(`${RED}✗${RESET} Failed to checkout main: ${result.stderr}`);
     process.exit(1);
   }
 
-  // Merge feature branch into main
+  // Merge feature branch into main (should be clean now)
   result = git(["merge", branch, "-m", `Merge branch '${branch}'`], cwd);
   if (!result.ok) {
-    console.error(`${RED}✗${RESET} Merge failed — there may be conflicts:\n${result.stderr}`);
-    console.error(`\n${DIM}Resolve conflicts manually, then re-run this command.${RESET}`);
+    console.error(`${RED}✗${RESET} Merge into main failed: ${result.stderr}`);
     process.exit(1);
   }
   console.log(`  Merged ${CYAN}${branch}${RESET} into ${CYAN}main${RESET}`);
