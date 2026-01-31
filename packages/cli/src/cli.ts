@@ -63,6 +63,8 @@ ${BOLD}Usage:${RESET}
   tracker work [id...]                    Start Claude Code on plans (interactive if no IDs)
   tracker checkout <id>                   Checkout plan branch and resume Claude Code conversation
   tracker complete [id]                   Merge plan branch into main and mark completed
+  tracker complete [id] --db-only         Mark completed without git operations
+  tracker reset <id>                      Reset plan to open, optionally deleting its branch
   tracker ui [port]                       Launch web dashboard (default port: 3847)
 
 ${BOLD}Examples:${RESET}
@@ -73,6 +75,7 @@ ${BOLD}Examples:${RESET}
   tracker work 1 2
   tracker checkout 3
   tracker complete 3
+  tracker reset 3
   tracker ui
   tracker ui 8080`);
 }
@@ -294,7 +297,10 @@ function planIdFromBranch(): number | null {
 }
 
 async function cmdComplete(args: string[]) {
-  let idStr = args[0];
+  const dbOnly = args.includes("--db-only");
+  const filteredArgs = args.filter((a) => a !== "--db-only");
+
+  let idStr = filteredArgs[0];
 
   // If no ID given, try to derive from the current branch
   if (!idStr) {
@@ -319,14 +325,20 @@ async function cmdComplete(args: string[]) {
     process.exit(1);
   }
 
-  if (!plan.branch) {
-    console.error(`${RED}Error: Plan #${id} has no branch${RESET}`);
-    process.exit(1);
-  }
-
   if (plan.status === "completed") {
     console.log(`${DIM}Plan #${id} is already completed.${RESET}`);
     return;
+  }
+
+  if (dbOnly) {
+    updateStatus(plan.id, "completed");
+    console.log(`${GREEN}✓${RESET} Plan ${BOLD}#${plan.id}${RESET} → ${GREEN}completed${RESET} (db only, no git operations)`);
+    return;
+  }
+
+  if (!plan.branch) {
+    console.error(`${RED}Error: Plan #${id} has no branch. Use --db-only to mark as completed without merging.${RESET}`);
+    process.exit(1);
   }
 
   const cwd = plan.project_path;
@@ -393,6 +405,73 @@ async function cmdComplete(args: string[]) {
   console.log(`\n${GREEN}✓${RESET} Plan ${BOLD}#${plan.id}${RESET} → ${GREEN}completed${RESET}`);
 }
 
+async function cmdReset(args: string[]) {
+  const idStr = args[0];
+  if (!idStr) {
+    console.error(`${RED}Error: reset requires a plan <id>${RESET}`);
+    process.exit(1);
+  }
+
+  const id = parseInt(idStr, 10);
+  if (isNaN(id)) {
+    console.error(`${RED}Error: Invalid id "${idStr}"${RESET}`);
+    process.exit(1);
+  }
+
+  const plan = getPlan(id);
+  if (!plan) {
+    console.error(`${RED}Error: Plan #${id} not found${RESET}`);
+    process.exit(1);
+  }
+
+  if (plan.status === "open") {
+    console.log(`${DIM}Plan #${id} is already open.${RESET}`);
+    return;
+  }
+
+  console.log(
+    `${BOLD}▶${RESET} Resetting plan ${BOLD}#${plan.id}${RESET}: ${plan.plan_title ?? "(untitled)"}`
+  );
+  console.log(`  ${DIM}Status:  ${plan.status}${RESET}`);
+  if (plan.branch) {
+    console.log(`  ${DIM}Branch:  ${plan.branch}${RESET}`);
+  }
+  console.log(`  ${DIM}Project: ${plan.project_path}${RESET}\n`);
+
+  // If there's a branch, check if it exists and offer to delete it
+  if (plan.branch) {
+    const cwd = plan.project_path;
+    const branchCheck = git(["rev-parse", "--verify", plan.branch], cwd);
+    if (branchCheck.ok) {
+      const logResult = git(["log", "--oneline", "main.." + plan.branch], cwd);
+      const commitCount = logResult.stdout ? logResult.stdout.split("\n").length : 0;
+      if (commitCount > 0) {
+        console.log(`${YELLOW}⚠${RESET} Branch ${CYAN}${plan.branch}${RESET} has ${commitCount} commit(s) not on main:\n`);
+        console.log(`${DIM}${logResult.stdout}${RESET}\n`);
+      }
+
+      const deleteBranch = await confirm({
+        message: `Delete branch ${plan.branch}?`,
+        default: false,
+      });
+
+      if (deleteBranch) {
+        // Make sure we're not on the branch we're deleting
+        git(["checkout", "main"], cwd);
+        const deleteResult = git(["branch", "-D", plan.branch], cwd);
+        if (deleteResult.ok) {
+          console.log(`  Deleted branch ${CYAN}${plan.branch}${RESET}`);
+        } else {
+          console.error(`${RED}✗${RESET} Failed to delete branch: ${deleteResult.stderr}`);
+        }
+      }
+    }
+  }
+
+  updateStatus(plan.id, "open");
+  console.log(`\n${GREEN}✓${RESET} Plan ${BOLD}#${plan.id}${RESET} → ${YELLOW}open${RESET}`);
+}
+
 function cmdUi(args: string[]) {
   const port = args[0] ?? "3847";
   const cliDir = dirname(new URL(import.meta.url).pathname);
@@ -453,6 +532,9 @@ switch (command) {
     break;
   case "complete":
     await cmdComplete(args);
+    break;
+  case "reset":
+    await cmdReset(args);
     break;
   case "ui":
     cmdUi(args);

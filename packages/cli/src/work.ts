@@ -1,8 +1,8 @@
 import { type Plan, updateStatus, updateBranch, updateSessionId } from "./db";
 import { randomUUID } from "crypto";
-import { readFileSync, mkdirSync, existsSync } from "fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, unlinkSync } from "fs";
 import { join } from "path";
-import { homedir } from "os";
+import { tmpdir, homedir } from "os";
 import { spawn, execSync } from "child_process";
 
 const LOGS_DIR = join(homedir(), ".local", "share", "task-tracker", "logs");
@@ -91,17 +91,30 @@ function parseVerdict(output: string): { approved: boolean; feedback: string } {
   };
 }
 
+function writeTempFile(content: string, prefix: string): string {
+  const filePath = join(tmpdir(), `tracker-${prefix}-${randomUUID()}.md`);
+  writeFileSync(filePath, content, "utf-8");
+  return filePath;
+}
+
 function spawnClaude(opts: {
   args: string[];
   cwd: string;
   logWriter: Writer;
+  promptFile?: string;
 }): Promise<{ code: number; output: string }> {
   return new Promise((resolve) => {
     const child = spawn("claude", opts.args, {
       cwd: opts.cwd,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: [opts.promptFile ? "pipe" : "ignore", "pipe", "pipe"],
       env: { ...process.env },
     });
+
+    if (opts.promptFile) {
+      const content = readFileSync(opts.promptFile, "utf-8");
+      child.stdin!.write(content);
+      child.stdin!.end();
+    }
 
     let output = "";
 
@@ -119,6 +132,9 @@ function spawnClaude(opts: {
     });
 
     child.on("close", (code) => {
+      if (opts.promptFile) {
+        try { unlinkSync(opts.promptFile); } catch {}
+      }
       resolve({ code: code ?? 1, output });
     });
   });
@@ -155,10 +171,11 @@ async function runReviewLoop(
 
     // Spawn reviewer
     const reviewPrompt = buildReviewPrompt(planContent, diff);
+    const reviewPromptFile = writeTempFile(reviewPrompt, "review");
     const reviewResult = await spawnClaude({
       args: [
         "-p",
-        reviewPrompt,
+        "-",
         "--dangerously-skip-permissions",
         "--verbose",
         "--output-format",
@@ -166,6 +183,7 @@ async function runReviewLoop(
       ],
       cwd: plan.project_path,
       logWriter,
+      promptFile: reviewPromptFile,
     });
 
     if (reviewResult.code !== 0) {
@@ -188,12 +206,13 @@ async function runReviewLoop(
 
     // Resume worker with feedback
     const revisionPrompt = buildRevisionPrompt(verdict.feedback);
+    const revisionPromptFile = writeTempFile(revisionPrompt, "revision");
     const workerResult = await spawnClaude({
       args: [
         "--resume",
         sessionId,
         "-p",
-        revisionPrompt,
+        "-",
         "--dangerously-skip-permissions",
         "--verbose",
         "--output-format",
@@ -201,6 +220,7 @@ async function runReviewLoop(
       ],
       cwd: plan.project_path,
       logWriter,
+      promptFile: revisionPromptFile,
     });
 
     if (workerResult.code !== 0) {
@@ -289,6 +309,7 @@ export async function startWork(plan: Plan): Promise<void> {
   console.log(`  ${DIM}Log: ${logPath}${RESET}\n`);
 
   const prompt = buildPrompt(planContent);
+  const promptFile = writeTempFile(prompt, "work");
 
   const logFile = Bun.file(logPath);
   const logWriter = logFile.writer();
@@ -297,7 +318,7 @@ export async function startWork(plan: Plan): Promise<void> {
   const workerResult = await spawnClaude({
     args: [
       "-p",
-      prompt,
+      "-",
       "--session-id",
       sessionId,
       "--dangerously-skip-permissions",
@@ -307,6 +328,7 @@ export async function startWork(plan: Plan): Promise<void> {
     ],
     cwd: plan.project_path,
     logWriter,
+    promptFile,
   });
 
   if (workerResult.code === 0) {
