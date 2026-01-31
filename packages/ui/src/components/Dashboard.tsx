@@ -76,7 +76,7 @@ export function Dashboard({ showCompleted, selectedProjects }: DashboardProps) {
           </Button>
         </div>
       )}
-      <div className="flex gap-4 flex-1 overflow-x-auto">
+      <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 flex-1 overflow-y-auto sm:overflow-y-hidden sm:overflow-x-auto">
         {columns.map((col) => (
           <KanbanColumn
             key={col.status}

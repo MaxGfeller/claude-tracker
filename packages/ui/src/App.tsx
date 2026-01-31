@@ -16,7 +16,7 @@ export default function App() {
         selectedProjects={selectedProjects}
         onSelectedProjectsChange={setSelectedProjects}
       />
-      <main className="flex-1 px-6 py-6 overflow-hidden">
+      <main className="flex-1 px-3 py-3 sm:px-6 sm:py-6 overflow-hidden">
         <Dashboard
           showCompleted={showCompleted}
           selectedProjects={selectedProjects}

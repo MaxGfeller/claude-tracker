@@ -172,9 +172,9 @@ export function LogViewer({
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="!max-w-[90vw] w-[1100px] h-[85vh] flex flex-col gap-0 p-0 overflow-hidden">
-        <DialogHeader className="px-6 py-4 border-b shrink-0">
-          <DialogTitle className="flex items-center gap-2">
+      <DialogContent className="!max-w-[calc(100%-1rem)] sm:!max-w-[90vw] w-full sm:w-[1100px] h-[calc(100%-2rem)] sm:h-[85vh] flex flex-col gap-0 p-0 overflow-hidden">
+        <DialogHeader className="px-4 py-3 sm:px-6 sm:py-4 border-b shrink-0">
+          <DialogTitle className="flex items-center gap-2 truncate">
             Logs: {planTitle}
             <span
               className={`inline-block w-2 h-2 rounded-full ${
@@ -187,7 +187,7 @@ export function LogViewer({
           <div
             ref={scrollRef}
             onScroll={checkIsAtBottom}
-            className="h-full overflow-y-auto bg-zinc-950 px-5 py-4 font-mono text-sm"
+            className="h-full overflow-y-auto bg-zinc-950 px-3 py-3 sm:px-5 sm:py-4 font-mono text-sm"
           >
             {entries.length === 0 && (
               <span className="text-zinc-500">Waiting for log output...</span>

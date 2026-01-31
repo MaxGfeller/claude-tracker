@@ -31,8 +31,8 @@ export function Header({
 
   return (
     <header className="border-b bg-card">
-      <div className="px-6 py-4 flex items-center justify-between">
-        <h1 className="text-xl font-bold tracking-tight">Task Tracker</h1>
+      <div className="px-3 py-3 sm:px-6 sm:py-4 flex items-center justify-between flex-wrap gap-2">
+        <h1 className="text-lg sm:text-xl font-bold tracking-tight">Task Tracker</h1>
         <div className="flex items-center gap-2">
           <label className="text-sm text-muted-foreground select-none">
             Show completed
@@ -41,7 +41,7 @@ export function Header({
         </div>
       </div>
       {projects.length > 1 && (
-        <div className="px-6 pb-3 flex items-center gap-2 flex-wrap">
+        <div className="px-3 pb-2 sm:px-6 sm:pb-3 flex items-center gap-2 flex-wrap">
           <span className="text-xs text-muted-foreground mr-1">Projects</span>
           {projects.map((project) => {
             const active =
