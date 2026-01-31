@@ -1,10 +1,18 @@
 # Task Tracker
 
-Orchestrate Claude Code agents to implement plans across multiple projects.
+Run multiple Claude Code plans in parallel, review them when ready, and merge with a single command.
 
-## Overview
+## How it works
 
-Task Tracker is a CLI + web dashboard for managing markdown plan files. It spawns Claude Code workers to implement each plan on a dedicated branch, runs automated review loops, and merges completed work back to main. Plans within the same project run sequentially; plans across different projects run in parallel.
+You plan features in Claude Code as you normally would. When Claude Code presents a plan you're happy with, run `/tracker-plan` to register it as a task. Then run `tracker work` to select one or more tasks to kick off -- tracker creates a dedicated branch for each, spawns Claude Code workers, and runs automated review loops. Multiple tasks can run in parallel across different projects.
+
+When you're ready to review, `tracker checkout <id>` switches to the feature branch and resumes the Claude Code conversation so you can inspect changes interactively. Once everything looks good, `tracker complete` merges the branch into main and closes the task.
+
+```
+Plan in Claude Code ──► /tracker-plan ──► tracker work ──► tracker checkout <id> ──► tracker complete
+                         (register)     (implement +       (review changes)         (merge & close)
+                                         auto-review)
+```
 
 ## Prerequisites
 
@@ -25,31 +33,39 @@ This builds the CLI and UI, then links the `tracker` binary globally.
 ## Quick start
 
 ```sh
-# 1. Write a plan as a markdown file (title = first # heading)
-echo "# Add dark mode support" > plan.md
+# 1. Inside a Claude Code session, after a plan is presented:
+/tracker-plan
 
-# 2. Register the plan
-tracker add plan.md /path/to/project
-
-# 3. Start a Claude Code worker
+# 2. Start a worker to implement it (or use the web dashboard)
 tracker work 1
 
-# 4. After review passes, merge to main
-tracker complete 1
+# 3. Check on the task and review changes interactively
+tracker checkout 1
+
+# 4. When everything looks good, merge to main
+tracker complete
+```
+
+You can queue up several plans and run them all at once:
+
+```sh
+tracker work          # interactive picker
+tracker work 1 2 3    # start specific tasks
 ```
 
 ## CLI reference
 
 | Command | Description |
 |---|---|
-| `tracker add <plan-path> <project-dir>` | Register a plan |
+| `tracker add <plan-path> <project-dir>` | Register a plan (or use `/tracker-plan` from Claude Code) |
 | `tracker list` | List all plans grouped by project |
 | `tracker status <id> <status>` | Update plan status (`open`, `in-progress`, `in-review`, `completed`) |
 | `tracker work [id...]` | Start Claude Code on plans (interactive picker if no IDs) |
-| `tracker checkout <id>` | Checkout plan branch and resume Claude Code conversation |
-| `tracker complete [id]` | Merge plan branch into main and mark completed (auto-detects branch if no ID) |
+| `tracker checkout <id>` | Switch to plan branch and resume the Claude Code conversation |
+| `tracker complete [id]` | Merge plan branch into main and mark completed (auto-detects from current branch) |
 | `tracker complete <id> --db-only` | Mark completed without git operations |
 | `tracker reset <id>` | Reset plan to open, optionally deleting its branch |
+| `tracker cancel <id>` | Cancel a running worker |
 | `tracker config` | Show all config values |
 | `tracker config <key>` | Get a config value |
 | `tracker config <key> <value>` | Set a config value |
@@ -63,20 +79,11 @@ tracker ui
 
 Opens a Kanban board at `http://localhost:3847` showing plans organized by status. Features:
 
-- **Kanban columns** — open, in-progress, in-review, completed
-- **Log viewer** — live-streamed worker/reviewer output per plan
-- **Start All** — kick off work on all open plans at once
+- **Kanban columns** -- open, in-progress, in-review, completed
+- **Log viewer** -- live-streamed worker/reviewer output per plan
+- **Start All** -- kick off work on all open plans at once
 
 For development with hot-reload: `bun run ui:dev`
-
-## How it works
-
-1. **Plan creation** — Write a markdown file. The first `# Heading` becomes the plan title.
-2. **Registration** — `tracker add` stores the plan in the database and records the target project directory.
-3. **Worker phase** — `tracker work` creates a branch (`plan/{id}-{slugified-title}`), spawns a Claude Code agent with the plan as its prompt, and commits the result.
-4. **Review loop** — A separate Claude Code reviewer agent evaluates the changes. If revisions are needed, the worker agent is re-invoked. This repeats up to `maxReviewRounds` times (default: 5).
-5. **Completion** — `tracker complete` merges the plan branch into main and marks the plan as completed.
-6. **Parallelism** — Plans in the same project run sequentially (one branch at a time). Plans targeting different projects run in parallel.
 
 ## Configuration
 
