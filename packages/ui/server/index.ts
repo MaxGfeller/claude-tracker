@@ -54,6 +54,31 @@ async function handleRequest(req: Request): Promise<Response> {
     return jsonResponse(plan);
   }
 
+  if (pathname === "/api/plans/work-all" && method === "POST") {
+    const plans = listPlans().filter((p: { status: string }) => p.status === "open");
+    if (plans.length === 0) {
+      return jsonResponse({ ok: false, started: [], message: "No open plans" }, 400);
+    }
+
+    const started: number[] = [];
+    for (const plan of plans) {
+      const child = spawn("bun", ["run", CLI_PATH, "work", String(plan.id)], {
+        cwd: plan.project_path,
+        stdio: "ignore",
+        detached: true,
+      });
+      child.unref();
+
+      if (child.pid) {
+        trackChild(child.pid);
+        child.on("exit", () => removeChild(child.pid!));
+      }
+      started.push(plan.id);
+    }
+
+    return jsonResponse({ ok: true, started, message: `Started work on ${started.length} plan(s)` });
+  }
+
   params = matchRoute(pathname, "/api/plans/:id/work");
   if (params && method === "POST") {
     const id = parseInt(params.id, 10);

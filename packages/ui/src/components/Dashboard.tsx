@@ -1,7 +1,8 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { usePlans } from "../hooks/usePlans";
 import { KanbanColumn } from "./KanbanColumn";
-import type { Plan } from "../api";
+import { Button } from "./ui/button";
+import { startAllWork, type Plan } from "../api";
 
 const COLUMNS = [
   { title: "Open", status: "open" },
@@ -17,6 +18,19 @@ interface DashboardProps {
 
 export function Dashboard({ showCompleted, selectedProjects }: DashboardProps) {
   const { plans, loading, refresh } = usePlans();
+  const [startingAll, setStartingAll] = useState(false);
+
+  const handleStartAll = async () => {
+    setStartingAll(true);
+    try {
+      await startAllWork();
+      refresh();
+    } catch (e) {
+      console.error("Failed to start all work:", e);
+    } finally {
+      setStartingAll(false);
+    }
+  };
 
   const filteredPlans = useMemo(() => {
     if (selectedProjects.size === 0) return plans;
@@ -51,17 +65,27 @@ export function Dashboard({ showCompleted, selectedProjects }: DashboardProps) {
   }
 
   const columns = showCompleted ? COLUMNS : COLUMNS.filter((c) => c.status !== "completed");
+  const openCount = (grouped.get("open") ?? []).length;
 
   return (
-    <div className="flex gap-4 h-full overflow-x-auto">
-      {columns.map((col) => (
-        <KanbanColumn
-          key={col.status}
-          title={col.title}
-          plans={grouped.get(col.status) ?? []}
-          onRefresh={refresh}
-        />
-      ))}
+    <div className="flex flex-col gap-3 h-full">
+      {openCount > 0 && (
+        <div className="flex items-center">
+          <Button size="sm" onClick={handleStartAll} disabled={startingAll}>
+            {startingAll ? "Starting..." : `Start All (${openCount})`}
+          </Button>
+        </div>
+      )}
+      <div className="flex gap-4 flex-1 overflow-x-auto">
+        {columns.map((col) => (
+          <KanbanColumn
+            key={col.status}
+            title={col.title}
+            plans={grouped.get(col.status) ?? []}
+            onRefresh={refresh}
+          />
+        ))}
+      </div>
     </div>
   );
 }

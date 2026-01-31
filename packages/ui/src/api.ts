@@ -27,6 +27,11 @@ export async function startPlanWork(id: number): Promise<{ ok: boolean; message:
   return res.json();
 }
 
+export async function startAllWork(): Promise<{ ok: boolean; started: number[]; message: string }> {
+  const res = await fetch("/api/plans/work-all", { method: "POST" });
+  return res.json();
+}
+
 export function planLogsURL(id: number): string {
   return `/api/plans/${id}/logs`;
 }
