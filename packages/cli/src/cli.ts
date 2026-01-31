@@ -4,6 +4,7 @@ import { addPlan, listPlans, updateStatus, getPlan, type Plan } from "./db";
 import { parsePlanTitle } from "./plans";
 import { startWork, startWorkMultiple } from "./work";
 import { selectPlans } from "./select";
+import { loadConfig } from "./config";
 import { existsSync } from "fs";
 import { resolve, dirname } from "path";
 import { spawnSync } from "child_process";
@@ -264,7 +265,12 @@ function cmdCheckout(args: string[]) {
   console.log(`\n${DIM}Resuming Claude Code conversation...${RESET}\n`);
 
   // Resume Claude Code conversation by session ID
-  const claude = spawnSync("claude", ["--resume", plan.session_id], {
+  const args = ["--resume", plan.session_id];
+  const config = loadConfig();
+  if (config.skipPermissions) {
+    args.push("--dangerously-skip-permissions");
+  }
+  const claude = spawnSync("claude", args, {
     cwd: plan.project_path,
     stdio: "inherit",
   });
