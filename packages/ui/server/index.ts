@@ -1,7 +1,9 @@
 import { existsSync } from "fs";
 import { join, resolve } from "path";
 import { spawn } from "child_process";
+import { createInterface } from "readline";
 import { handleSSELogs } from "./sse";
+import { trackChild, removeChild, getActiveChildCount } from "./children";
 
 // Import DB functions from the CLI package via workspace
 import { listPlans, getPlan } from "@tracker/cli/src/db";
@@ -69,6 +71,11 @@ async function handleRequest(req: Request): Promise<Response> {
     });
     child.unref();
 
+    if (child.pid) {
+      trackChild(child.pid);
+      child.on("exit", () => removeChild(child.pid!));
+    }
+
     return jsonResponse({ ok: true, message: `Started work on plan #${id}` });
   }
 
@@ -103,4 +110,42 @@ console.log(`Task Tracker API server running on http://localhost:${PORT}`);
 Bun.serve({
   port: PORT,
   fetch: handleRequest,
+});
+
+// Graceful shutdown handling
+let prompting = false;
+
+process.on("SIGINT", () => {
+  if (prompting) {
+    // Double Ctrl+C: force exit
+    console.log("\nForce exiting.");
+    process.exit(0);
+  }
+
+  const count = getActiveChildCount();
+  if (count === 0) {
+    process.exit(0);
+  }
+
+  prompting = true;
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  rl.question(
+    `\n${count} work process${count > 1 ? "es" : ""} still running. Exit anyway? Workers will continue in the background. (y/N) `,
+    (answer) => {
+      rl.close();
+      prompting = false;
+      if (answer.trim().toLowerCase() === "y") {
+        process.exit(0);
+      }
+      console.log("Resuming server.");
+    },
+  );
+});
+
+process.on("SIGTERM", () => {
+  const count = getActiveChildCount();
+  if (count > 0) {
+    console.log(`Exiting. ${count} work process${count > 1 ? "es" : ""} will continue in the background.`);
+  }
+  process.exit(0);
 });
