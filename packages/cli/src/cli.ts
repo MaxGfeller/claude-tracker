@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { addPlan, listPlans, updateStatus, getPlan, type Plan } from "./db";
+import { addPlan, listPlans, updateStatus, getPlan, deletePlan, type Plan } from "./db";
 import { parsePlanTitle } from "./plans";
 import { startWork, startWorkMultiple } from "./work";
 import { selectPlans } from "./select";
@@ -66,6 +66,7 @@ ${BOLD}Usage:${RESET}
   tracker complete [id]                   Merge plan branch into main and mark completed
   tracker complete [id] --db-only         Mark completed without git operations
   tracker reset <id>                      Reset plan to open, optionally deleting its branch
+  tracker cancel <id>                     Cancel a plan, deleting it and its branch
   tracker config                          Show all config values
   tracker config <key>                    Get a config value
   tracker config <key> <value>            Set a config value
@@ -485,6 +486,79 @@ async function cmdReset(args: string[]) {
   console.log(`\n${GREEN}✓${RESET} Plan ${BOLD}#${plan.id}${RESET} → ${YELLOW}open${RESET}`);
 }
 
+async function cmdCancel(args: string[]) {
+  const idStr = args[0];
+  if (!idStr) {
+    console.error(`${RED}Error: cancel requires a plan <id>${RESET}`);
+    process.exit(1);
+  }
+
+  const id = parseInt(idStr, 10);
+  if (isNaN(id)) {
+    console.error(`${RED}Error: Invalid id "${idStr}"${RESET}`);
+    process.exit(1);
+  }
+
+  const plan = getPlan(id);
+  if (!plan) {
+    console.error(`${RED}Error: Plan #${id} not found${RESET}`);
+    process.exit(1);
+  }
+
+  console.log(
+    `${BOLD}▶${RESET} Cancelling plan ${BOLD}#${plan.id}${RESET}: ${plan.plan_title ?? "(untitled)"}`
+  );
+  console.log(`  ${DIM}Status:  ${plan.status}${RESET}`);
+  if (plan.branch) {
+    console.log(`  ${DIM}Branch:  ${plan.branch}${RESET}`);
+  }
+  console.log(`  ${DIM}Project: ${plan.project_path}${RESET}\n`);
+
+  // If there's a branch, check for unmerged commits as a warning
+  if (plan.branch) {
+    const cwd = plan.project_path;
+    const branchCheck = git(["rev-parse", "--verify", plan.branch], cwd);
+    if (branchCheck.ok) {
+      const logResult = git(["log", "--oneline", "main.." + plan.branch], cwd);
+      const commitCount = logResult.stdout ? logResult.stdout.split("\n").length : 0;
+      if (commitCount > 0) {
+        console.log(`${YELLOW}⚠${RESET} Branch ${CYAN}${plan.branch}${RESET} has ${commitCount} unmerged commit(s):\n`);
+        console.log(`${DIM}${logResult.stdout}${RESET}\n`);
+      }
+    }
+  }
+
+  const proceed = await confirm({
+    message: `Cancel plan #${id} and delete its branch? This cannot be undone.`,
+    default: false,
+  });
+
+  if (!proceed) {
+    console.log(`${DIM}Aborted.${RESET}`);
+    return;
+  }
+
+  // Delete the branch if it exists
+  if (plan.branch) {
+    const cwd = plan.project_path;
+    const branchCheck = git(["rev-parse", "--verify", plan.branch], cwd);
+    if (branchCheck.ok) {
+      // Make sure we're not on the branch we're deleting
+      git(["checkout", "main"], cwd);
+      const deleteResult = git(["branch", "-D", plan.branch], cwd);
+      if (deleteResult.ok) {
+        console.log(`  Deleted branch ${CYAN}${plan.branch}${RESET}`);
+      } else {
+        console.error(`${RED}✗${RESET} Failed to delete branch: ${deleteResult.stderr}`);
+      }
+    }
+  }
+
+  // Delete the plan from the DB
+  deletePlan(id);
+  console.log(`\n${GREEN}✓${RESET} Plan ${BOLD}#${plan.id}${RESET} cancelled and removed.`);
+}
+
 function cmdConfig(args: string[]) {
   const config = loadConfig();
 
@@ -599,6 +673,9 @@ switch (command) {
     break;
   case "reset":
     await cmdReset(args);
+    break;
+  case "cancel":
+    await cmdCancel(args);
     break;
   case "config":
     cmdConfig(args);

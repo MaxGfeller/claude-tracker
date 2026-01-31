@@ -114,6 +114,11 @@ export function updateSessionId(id: number, sessionId: string): void {
   `).run(sessionId, id);
 }
 
+export function deletePlan(id: number): void {
+  const db = getDb();
+  db.prepare("DELETE FROM plans WHERE id = ?").run(id);
+}
+
 export function getPlansByProject(projectPath: string): Plan[] {
   const db = getDb();
   return db
