@@ -265,12 +265,12 @@ function cmdCheckout(args: string[]) {
   console.log(`\n${DIM}Resuming Claude Code conversation...${RESET}\n`);
 
   // Resume Claude Code conversation by session ID
-  const args = ["--resume", plan.session_id];
+  const claudeArgs = ["--resume", plan.session_id];
   const config = loadConfig();
   if (config.skipPermissions) {
-    args.push("--dangerously-skip-permissions");
+    claudeArgs.push("--dangerously-skip-permissions");
   }
-  const claude = spawnSync("claude", args, {
+  const claude = spawnSync("claude", claudeArgs, {
     cwd: plan.project_path,
     stdio: "inherit",
   });
