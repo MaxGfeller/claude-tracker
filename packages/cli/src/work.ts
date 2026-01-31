@@ -1,4 +1,5 @@
 import { type Plan, updateStatus, updateBranch, updateSessionId } from "./db";
+import { loadConfig } from "./config";
 import { randomUUID } from "crypto";
 import { readFileSync, writeFileSync, mkdirSync, existsSync, unlinkSync } from "fs";
 import { join } from "path";
@@ -6,7 +7,7 @@ import { tmpdir, homedir } from "os";
 import { spawn, execSync } from "child_process";
 
 const LOGS_DIR = join(homedir(), ".local", "share", "task-tracker", "logs");
-const MAX_REVIEW_ROUNDS = 5;
+const MAX_REVIEW_ROUNDS = loadConfig().maxReviewRounds!;
 
 const RESET = "\x1b[0m";
 const BOLD = "\x1b[1m";

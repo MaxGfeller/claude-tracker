@@ -6,10 +6,12 @@ export const CONFIG_PATH = join(homedir(), ".local", "share", "task-tracker", "c
 
 export interface TrackerConfig {
   skipPermissions?: boolean;
+  maxReviewRounds?: number;
 }
 
 const DEFAULTS: TrackerConfig = {
   skipPermissions: false,
+  maxReviewRounds: 5,
 };
 
 export function loadConfig(): TrackerConfig {
