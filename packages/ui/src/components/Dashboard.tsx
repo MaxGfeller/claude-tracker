@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { usePlans } from "../hooks/usePlans";
 import { KanbanColumn } from "./KanbanColumn";
 import type { Plan } from "../api";
@@ -11,10 +12,18 @@ const COLUMNS = [
 
 interface DashboardProps {
   showCompleted: boolean;
+  selectedProjects: Set<string>;
 }
 
-export function Dashboard({ showCompleted }: DashboardProps) {
+export function Dashboard({ showCompleted, selectedProjects }: DashboardProps) {
   const { plans, loading, refresh } = usePlans();
+
+  const filteredPlans = useMemo(() => {
+    if (selectedProjects.size === 0) return plans;
+    return plans.filter((p) =>
+      selectedProjects.has(p.project_name ?? p.project_path)
+    );
+  }, [plans, selectedProjects]);
 
   if (loading) {
     return <p className="text-muted-foreground">Loading plans...</p>;
@@ -36,7 +45,7 @@ export function Dashboard({ showCompleted }: DashboardProps) {
   for (const col of COLUMNS) {
     grouped.set(col.status, []);
   }
-  for (const plan of plans) {
+  for (const plan of filteredPlans) {
     const bucket = grouped.get(plan.status);
     if (bucket) bucket.push(plan);
   }

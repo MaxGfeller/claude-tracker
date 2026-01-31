@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import {
   Dialog,
   DialogContent,
@@ -7,6 +7,8 @@ import {
 } from "./ui/dialog";
 import { useEventSource } from "../hooks/useEventSource";
 import { planLogsURL } from "../api";
+import { ArrowDownIcon } from "lucide-react";
+import { Button } from "./ui/button";
 
 interface LogEntry {
   kind: "text" | "tool" | "tool_result" | "result" | "system";
@@ -142,6 +144,13 @@ export function LogViewer({
   const url = open ? planLogsURL(planId) : null;
   const { lines, connected } = useEventSource(url);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [isAtBottom, setIsAtBottom] = useState(true);
+
+  const checkIsAtBottom = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    setIsAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 150);
+  }, []);
 
   const entries = lines
     .map(parseLogLine)
@@ -149,8 +158,17 @@ export function LogViewer({
 
   useEffect(() => {
     const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [entries.length]);
+    if (!el) return;
+    if (isAtBottom) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [entries.length, isAtBottom]);
+
+  function scrollToBottom() {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+  }
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
@@ -165,16 +183,36 @@ export function LogViewer({
             />
           </DialogTitle>
         </DialogHeader>
-        <div
-          ref={scrollRef}
-          className="flex-1 overflow-y-auto bg-zinc-950 px-5 py-4 font-mono text-sm"
-        >
-          {entries.length === 0 && (
-            <span className="text-zinc-500">Waiting for log output...</span>
-          )}
-          {entries.map((entry, i) => (
-            <LogEntryView key={i} entry={entry} />
-          ))}
+        <div className="relative flex-1 overflow-hidden">
+          <div
+            ref={scrollRef}
+            onScroll={checkIsAtBottom}
+            className="h-full overflow-y-auto bg-zinc-950 px-5 py-4 font-mono text-sm"
+          >
+            {entries.length === 0 && (
+              <span className="text-zinc-500">Waiting for log output...</span>
+            )}
+            {entries.map((entry, i) => (
+              <LogEntryView key={i} entry={entry} />
+            ))}
+          </div>
+          <div
+            className={`absolute bottom-4 left-1/2 -translate-x-1/2 transition-all duration-200 ${
+              isAtBottom
+                ? "opacity-0 translate-y-2 pointer-events-none"
+                : "opacity-100 translate-y-0"
+            }`}
+          >
+            <Button
+              size="sm"
+              variant="secondary"
+              className="shadow-lg gap-1.5"
+              onClick={scrollToBottom}
+            >
+              <ArrowDownIcon className="size-3.5" />
+              Scroll to bottom
+            </Button>
+          </div>
         </div>
       </DialogContent>
     </Dialog>
