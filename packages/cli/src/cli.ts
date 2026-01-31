@@ -4,7 +4,7 @@ import { addPlan, listPlans, updateStatus, getPlan, type Plan } from "./db";
 import { parsePlanTitle } from "./plans";
 import { startWork, startWorkMultiple } from "./work";
 import { selectPlans } from "./select";
-import { loadConfig } from "./config";
+import { loadConfig, saveConfig, CONFIG_KEYS, CONFIG_PATH, type TrackerConfig } from "./config";
 import { existsSync } from "fs";
 import { resolve, dirname } from "path";
 import { spawnSync } from "child_process";
@@ -66,7 +66,14 @@ ${BOLD}Usage:${RESET}
   tracker complete [id]                   Merge plan branch into main and mark completed
   tracker complete [id] --db-only         Mark completed without git operations
   tracker reset <id>                      Reset plan to open, optionally deleting its branch
+  tracker config                          Show all config values
+  tracker config <key>                    Get a config value
+  tracker config <key> <value>            Set a config value
   tracker ui [port]                       Launch web dashboard (default port: 3847)
+
+${BOLD}Config keys:${RESET}
+  skipPermissions   (boolean)  Skip Claude permission prompts (default: false)
+  maxReviewRounds   (number)   Max review iterations per plan (default: 5)
 
 ${BOLD}Examples:${RESET}
   tracker add ~/.claude/plans/my-plan.md /path/to/project
@@ -478,6 +485,57 @@ async function cmdReset(args: string[]) {
   console.log(`\n${GREEN}✓${RESET} Plan ${BOLD}#${plan.id}${RESET} → ${YELLOW}open${RESET}`);
 }
 
+function cmdConfig(args: string[]) {
+  const config = loadConfig();
+
+  if (args.length === 0) {
+    // Show all config values
+    console.log(`${BOLD}Config${RESET} ${DIM}(${CONFIG_PATH})${RESET}\n`);
+    for (const key of Object.keys(CONFIG_KEYS) as (keyof TrackerConfig)[]) {
+      console.log(`  ${BOLD}${key}${RESET} = ${config[key]}`);
+    }
+    console.log();
+    return;
+  }
+
+  const key = args[0] as keyof TrackerConfig;
+  if (!(key in CONFIG_KEYS)) {
+    console.error(`${RED}Error: Unknown config key "${key}"${RESET}`);
+    console.error(`${DIM}Valid keys: ${Object.keys(CONFIG_KEYS).join(", ")}${RESET}`);
+    process.exit(1);
+  }
+
+  if (args.length === 1) {
+    // Get single value
+    console.log(`${BOLD}${key}${RESET} = ${config[key]}`);
+    return;
+  }
+
+  // Set value
+  const rawValue = args[1];
+  const type = CONFIG_KEYS[key];
+  let parsed: boolean | number;
+
+  if (type === "boolean") {
+    if (rawValue === "true") parsed = true;
+    else if (rawValue === "false") parsed = false;
+    else {
+      console.error(`${RED}Error: "${key}" expects a boolean (true/false)${RESET}`);
+      process.exit(1);
+    }
+  } else {
+    parsed = parseInt(rawValue, 10);
+    if (isNaN(parsed)) {
+      console.error(`${RED}Error: "${key}" expects a number${RESET}`);
+      process.exit(1);
+    }
+  }
+
+  (config as any)[key] = parsed;
+  saveConfig(config);
+  console.log(`${GREEN}✓${RESET} ${BOLD}${key}${RESET} = ${parsed}`);
+}
+
 function cmdUi(args: string[]) {
   const port = args[0] ?? "3847";
   const cliDir = dirname(new URL(import.meta.url).pathname);
@@ -541,6 +599,9 @@ switch (command) {
     break;
   case "reset":
     await cmdReset(args);
+    break;
+  case "config":
+    cmdConfig(args);
     break;
   case "ui":
     cmdUi(args);

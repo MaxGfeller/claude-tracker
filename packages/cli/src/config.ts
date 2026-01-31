@@ -1,6 +1,6 @@
-import { join } from "path";
+import { join, dirname } from "path";
 import { homedir } from "os";
-import { readFileSync } from "fs";
+import { readFileSync, writeFileSync, mkdirSync } from "fs";
 
 export const CONFIG_PATH = join(homedir(), ".local", "share", "task-tracker", "config.json");
 
@@ -14,6 +14,11 @@ const DEFAULTS: TrackerConfig = {
   maxReviewRounds: 5,
 };
 
+export const CONFIG_KEYS: Record<keyof TrackerConfig, "boolean" | "number"> = {
+  skipPermissions: "boolean",
+  maxReviewRounds: "number",
+};
+
 export function loadConfig(): TrackerConfig {
   try {
     const raw = readFileSync(CONFIG_PATH, "utf-8");
@@ -22,4 +27,9 @@ export function loadConfig(): TrackerConfig {
   } catch {
     return { ...DEFAULTS };
   }
+}
+
+export function saveConfig(config: TrackerConfig): void {
+  mkdirSync(dirname(CONFIG_PATH), { recursive: true });
+  writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2) + "\n");
 }
