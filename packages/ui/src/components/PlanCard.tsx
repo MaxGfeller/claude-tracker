@@ -47,9 +47,11 @@ export function PlanCard({ plan, onRefresh }: PlanCardProps) {
     }
   };
 
-  const canStart = plan.status === "open" && plan.plan_path;
+  const isOpen = plan.status === "open";
+  const canStart = isOpen && plan.plan_path;
   const canViewLogs = plan.status === "in-progress" || plan.status === "in-review";
   const hasPlan = !!plan.plan_path;
+  const canEdit = hasPlan && isOpen;
   const title = plan.plan_title ?? "(untitled)";
   const projectName = plan.project_name ?? plan.project_path.split("/").pop() ?? plan.project_path;
 
@@ -69,16 +71,16 @@ export function PlanCard({ plan, onRefresh }: PlanCardProps) {
           )}
           <div className="flex flex-wrap gap-2 mt-1">
             {hasPlan && (
-              <>
-                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setViewerOpen(true)}>
-                  View Plan
-                </Button>
-                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setEditorOpen(true)}>
-                  Edit
-                </Button>
-              </>
+              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setViewerOpen(true)}>
+                View Plan
+              </Button>
             )}
-            {!hasPlan && plan.status === "open" && (
+            {canEdit && (
+              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setEditorOpen(true)}>
+                Edit
+              </Button>
+            )}
+            {!hasPlan && isOpen && (
               <Button size="sm" variant="outline" className="h-7 text-xs" onClick={handleGeneratePlan} disabled={generating}>
                 {generating ? "Generating..." : "Generate Plan"}
               </Button>

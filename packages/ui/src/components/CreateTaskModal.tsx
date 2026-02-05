@@ -19,6 +19,7 @@ interface CreateTaskModalProps {
 export function CreateTaskModal({ open, onClose, onCreated }: CreateTaskModalProps) {
   const { plans } = usePlans();
   const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
   const [projectPath, setProjectPath] = useState("");
   const [customPath, setCustomPath] = useState("");
   const [isCustomMode, setIsCustomMode] = useState(false);
@@ -45,8 +46,9 @@ export function CreateTaskModal({ open, onClose, onCreated }: CreateTaskModalPro
 
     setCreating(true);
     try {
-      const plan = await createTask(title.trim(), finalPath.trim());
+      const plan = await createTask(title.trim(), finalPath.trim(), undefined, description.trim() || undefined);
       setTitle("");
+      setDescription("");
       setProjectPath("");
       setCustomPath("");
       setIsCustomMode(false);
@@ -61,6 +63,7 @@ export function CreateTaskModal({ open, onClose, onCreated }: CreateTaskModalPro
 
   const handleClose = () => {
     setTitle("");
+    setDescription("");
     setProjectPath("");
     setCustomPath("");
     setIsCustomMode(false);
@@ -98,6 +101,19 @@ export function CreateTaskModal({ open, onClose, onCreated }: CreateTaskModalPro
                 placeholder="Add user authentication"
                 className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                 autoFocus
+              />
+            </div>
+            <div className="flex flex-col gap-2">
+              <label htmlFor="description" className="text-sm font-medium">
+                Description <span className="text-muted-foreground font-normal">(optional)</span>
+              </label>
+              <textarea
+                id="description"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="Additional details about the task..."
+                rows={3}
+                className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring resize-none"
               />
             </div>
             <div className="flex flex-col gap-2">

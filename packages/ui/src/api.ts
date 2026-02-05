@@ -2,6 +2,7 @@ export interface Plan {
   id: number;
   plan_path: string;
   plan_title: string | null;
+  description: string | null;
   project_path: string;
   project_name: string | null;
   status: string;
@@ -41,12 +42,13 @@ export function planLogsURL(id: number): string {
 export async function createTask(
   title: string,
   projectPath: string,
-  projectName?: string
+  projectName?: string,
+  description?: string
 ): Promise<Plan> {
   const res = await fetch("/api/plans", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ title, projectPath, projectName }),
+    body: JSON.stringify({ title, projectPath, projectName, description }),
   });
   if (!res.ok) {
     const data = await res.json();

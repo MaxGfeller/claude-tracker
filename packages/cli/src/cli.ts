@@ -82,7 +82,9 @@ function printUsage() {
   console.log(`${BOLD}tracker${RESET} — Track Claude Code plans across projects
 
 ${BOLD}Usage:${RESET}
-  tracker create [--project <path>] <title>  Create a new task (infers project from git root)
+  tracker create [options] <title>           Create a new task (infers project from git root)
+    --project, -p <path>                     Specify project path
+    --description, -d <text>                 Add a description for the task
   tracker add <plan-path> <project-dir>   Register a plan
   tracker list                            List all plans grouped by project
   tracker status <id> <status>            Update plan status (open|in-progress|completed|in-review)
@@ -111,6 +113,7 @@ ${BOLD}Config keys:${RESET}
 
 ${BOLD}Examples:${RESET}
   tracker create "Add user authentication"
+  tracker create -d "OAuth2 with Google and GitHub" "Add social login"
   tracker create --project /path/to/repo "Add auth"
   tracker plan 5
   tracker add ~/.claude/plans/my-plan.md /path/to/project
@@ -158,13 +161,17 @@ function cmdAdd(args: string[]) {
 
 function cmdCreate(args: string[]) {
   let projectPath: string | null = null;
+  let description: string | null = null;
   let title: string | null = null;
 
-  // Parse args: --project <path> or just <title>
+  // Parse args: --project <path>, --description <text>, or just <title>
   let i = 0;
   while (i < args.length) {
     if (args[i] === "--project" || args[i] === "-p") {
       projectPath = args[i + 1];
+      i += 2;
+    } else if (args[i] === "--description" || args[i] === "-d") {
+      description = args[i + 1];
       i += 2;
     } else {
       // Remaining args are the title
@@ -193,10 +200,13 @@ function cmdCreate(args: string[]) {
     process.exit(1);
   }
 
-  const plan = createTask(resolvedProject, title);
+  const plan = createTask(resolvedProject, title, undefined, description ?? undefined);
 
   console.log(`${GREEN}✓${RESET} Created task ${BOLD}#${plan.id}${RESET}`);
   console.log(`  Title:   ${plan.plan_title}`);
+  if (plan.description) {
+    console.log(`  Desc:    ${plan.description}`);
+  }
   console.log(`  Project: ${plan.project_name}`);
   console.log(`  ${DIM}Use "tracker plan ${plan.id}" to generate a plan${RESET}`);
 }

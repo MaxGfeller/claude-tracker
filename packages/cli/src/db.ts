@@ -43,6 +43,9 @@ export function getDb(): Database {
   if (!cols.some((c) => c.name === "planning_session_id")) {
     _db.run("ALTER TABLE plans ADD COLUMN planning_session_id TEXT");
   }
+  if (!cols.some((c) => c.name === "description")) {
+    _db.run("ALTER TABLE plans ADD COLUMN description TEXT");
+  }
 
   return _db;
 }
@@ -51,6 +54,7 @@ export interface Plan {
   id: number;
   plan_path: string;
   plan_title: string | null;
+  description: string | null;
   project_path: string;
   project_name: string | null;
   status: string;
@@ -133,16 +137,17 @@ export function getPlansByProject(projectPath: string): Plan[] {
 export function createTask(
   projectPath: string,
   title: string,
-  projectName?: string
+  projectName?: string,
+  description?: string
 ): Plan {
   const db = getDb();
   const name = projectName ?? projectPath.split("/").pop() ?? projectPath;
 
   const stmt = db.prepare(`
-    INSERT INTO plans (plan_path, plan_title, project_path, project_name)
-    VALUES (?, ?, ?, ?)
+    INSERT INTO plans (plan_path, plan_title, project_path, project_name, description)
+    VALUES (?, ?, ?, ?, ?)
   `);
-  stmt.run("", title, projectPath, name);
+  stmt.run("", title, projectPath, name, description ?? null);
 
   const last = db.prepare("SELECT last_insert_rowid() as id").get() as { id: number };
   return db.prepare("SELECT * FROM plans WHERE id = ?").get(last.id) as Plan;

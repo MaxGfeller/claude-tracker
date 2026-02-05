@@ -116,8 +116,8 @@ async function handleRequest(req: Request): Promise<Response> {
   // POST /api/plans - Create a new task
   if (pathname === "/api/plans" && method === "POST") {
     try {
-      const body = await req.json() as { title: string; projectPath: string; projectName?: string };
-      const { title, projectPath, projectName } = body;
+      const body = await req.json() as { title: string; projectPath: string; projectName?: string; description?: string };
+      const { title, projectPath, projectName, description } = body;
 
       if (!title || !projectPath) {
         return jsonResponse({ error: "title and projectPath are required" }, 400);
@@ -127,7 +127,7 @@ async function handleRequest(req: Request): Promise<Response> {
         return jsonResponse({ error: `Project path not found: ${projectPath}` }, 400);
       }
 
-      const plan = createTask(projectPath, title, projectName);
+      const plan = createTask(projectPath, title, projectName, description);
       return jsonResponse(plan);
     } catch (e: any) {
       return jsonResponse({ error: e.message }, 400);
@@ -145,10 +145,10 @@ async function handleRequest(req: Request): Promise<Response> {
       return jsonResponse({ error: "Task has no title" }, 400);
     }
 
-    // Create or reuse planning session ID
+    // Create or reuse planning session ID (must be valid UUID)
     let sessionId = plan.planning_session_id;
     if (!sessionId) {
-      sessionId = `planning-${plan.id}-${Date.now()}`;
+      sessionId = crypto.randomUUID();
       updatePlanningSessionId(plan.id, sessionId);
     }
 
