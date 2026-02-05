@@ -54,22 +54,30 @@ export function Header({
       <div className="px-3 py-3 sm:px-6 sm:py-4 flex items-center justify-between flex-wrap gap-2">
         <div className="flex items-center gap-4">
           <h1 className="text-lg sm:text-xl font-bold tracking-tight">Task Tracker</h1>
-          {usage?.enabled && usage.usage && (
-            <div className="flex items-center gap-2 text-xs">
-              <div className="flex items-center gap-1">
-                <span className="text-muted-foreground">Usage:</span>
-                <span className={usage.usage.usagePercent >= 90 ? "text-red-500 font-semibold" : usage.usage.usagePercent >= 70 ? "text-yellow-500 font-semibold" : "text-green-600 font-semibold"}>
-                  {usage.usage.usagePercent}%
-                </span>
-              </div>
-              <div className="text-muted-foreground">
-                {usage.usage.inputTokensPerMinute.toLocaleString()} / {usage.limits!.maxInputTokensPerMinute.toLocaleString()} tok/min
-              </div>
-              {usage.usage.totalCostUSD > 0 && (
-                <div className="text-muted-foreground">
-                  ${usage.usage.totalCostUSD.toFixed(2)}
-                </div>
-              )}
+          {usage?.authenticated && (usage.fiveHour || usage.sevenDay) && (
+            <div className="flex items-center gap-3 text-xs">
+              {usage.fiveHour && (() => {
+                const pct = Math.round(usage.fiveHour!.utilization * 100);
+                return (
+                  <div className="flex items-center gap-1">
+                    <span className="text-muted-foreground">5h:</span>
+                    <span className={pct >= 90 ? "text-red-500 font-semibold" : pct >= 70 ? "text-yellow-500 font-semibold" : "text-green-600 font-semibold"}>
+                      {pct}%
+                    </span>
+                  </div>
+                );
+              })()}
+              {usage.sevenDay && (() => {
+                const pct = Math.round(usage.sevenDay!.utilization * 100);
+                return (
+                  <div className="flex items-center gap-1">
+                    <span className="text-muted-foreground">7d:</span>
+                    <span className={pct >= 90 ? "text-red-500 font-semibold" : pct >= 70 ? "text-yellow-500 font-semibold" : "text-green-600 font-semibold"}>
+                      {pct}%
+                    </span>
+                  </div>
+                );
+              })()}
             </div>
           )}
         </div>

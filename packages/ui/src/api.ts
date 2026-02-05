@@ -117,26 +117,25 @@ export async function deleteTask(id: number): Promise<{ ok: boolean; message: st
   return res.json();
 }
 
+export interface UsageWindow {
+  utilization: number;
+  resetsAt: string;
+}
+
 export interface UsageData {
-  enabled: boolean;
+  authenticated: boolean;
   message?: string;
   error?: string;
-  usage?: {
-    inputTokensPerMinute: number;
-    requestsPerMinute: number;
-    totalCostUSD: number;
-    availableInputTokens: number;
-    availableRequests: number;
-    usagePercent: number;
+  fiveHour?: UsageWindow;
+  sevenDay?: UsageWindow;
+  sevenDaySonnet?: UsageWindow;
+  sevenDayOpus?: UsageWindow;
+  extraUsage?: {
+    isEnabled: boolean;
+    monthlyLimit?: number;
+    usedCredits?: number;
+    utilization?: number;
   };
-  limits?: {
-    maxInputTokensPerMinute: number;
-    maxRequestsPerMinute: number;
-    maxCostPerSession: number;
-    minAvailableInputTokens: number;
-    minAvailableRequests: number;
-  };
-  config?: any;
 }
 
 export async function fetchUsage(): Promise<UsageData> {

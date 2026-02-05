@@ -22,10 +22,7 @@ import { parsePlanTitle } from "./plans";
 import { startWork, startWorkMultiple } from "./work";
 import { selectPlans } from "./select";
 import { loadConfig, saveConfig, CONFIG_KEYS, CONFIG_PATH, type TrackerConfig } from "./config";
-import { initOTelCollector, shutdownOTelCollector, getClaudeOTelEnv } from "./otel-setup";
-import { checkUsageBeforeWork } from "./usage-check";
-import { UsageTracker } from "./usage-tracker";
-import { buildUsageLimits } from "./usage-check";
+import { fetchClaudeUsage, checkUsageBeforeWork } from "./claude-usage";
 import { existsSync, mkdirSync, writeFileSync, readdirSync, rmSync, readFileSync, appendFileSync } from "fs";
 import { resolve, dirname, join } from "path";
 import { spawnSync } from "child_process";
@@ -190,12 +187,6 @@ ${BOLD}Usage:${RESET}
 ${BOLD}Config keys:${RESET}
   skipPermissions                        (boolean)  Skip Claude permission prompts (default: false)
   maxReviewRounds                        (number)   Max review iterations per plan (default: 5)
-  usageLimits.enabled                    (boolean)  Enable usage limit checking (default: false)
-  usageLimits.minAvailableInputTokens    (number)   Min tokens required to start (default: 10000)
-  usageLimits.minAvailableRequests       (number)   Min requests required to start (default: 5)
-  usageLimits.maxCostPerSession          (number)   Max cost in USD per session (default: 1.0)
-  usageLimits.maxWaitMinutes             (number)   Max wait time for quota reset (default: 10)
-  usageLimits.organizationTier           (number)   Claude tier 1-4 (default: auto-detect)
   worktree.enabled                       (boolean)  Use git worktrees for isolation (default: true)
   worktree.copyGitignored                (boolean)  Copy .env files to worktrees (default: true)
   worktree.autoCleanupOnComplete         (boolean)  Remove worktree on completion (default: false)
@@ -224,7 +215,6 @@ ${BOLD}Examples:${RESET}
 
   tracker complete 3
   tracker reset 3
-  tracker config usageLimits.enabled true
   tracker ui
   tracker ui 8080`);
 }
@@ -494,11 +484,6 @@ function cmdStatus(args: string[]) {
 }
 
 async function cmdWork(args: string[]) {
-  const config = loadConfig();
-
-  // Initialize OTel collector
-  await initOTelCollector();
-
   let plans: Plan[];
   if (args.length > 0) {
     // IDs provided directly
@@ -507,13 +492,11 @@ async function cmdWork(args: string[]) {
       const id = parseInt(idStr, 10);
       if (isNaN(id)) {
         console.error(`${RED}Error: Invalid id "${idStr}"${RESET}`);
-        await shutdownOTelCollector();
         process.exit(1);
       }
       const plan = getPlan(id);
       if (!plan) {
         console.error(`${RED}Error: Plan #${id} not found${RESET}`);
-        await shutdownOTelCollector();
         process.exit(1);
       }
       plans.push(plan);
@@ -524,13 +507,11 @@ async function cmdWork(args: string[]) {
     const openPlans = allPlans.filter((p) => p.status === "open");
     if (openPlans.length === 0) {
       console.log(`${DIM}No open plans available. Use "tracker add" to register a plan.${RESET}`);
-      await shutdownOTelCollector();
       return;
     }
     const selected = await selectPlans(allPlans);
     if (selected.length === 0) {
       console.log(`${DIM}No plans selected.${RESET}`);
-      await shutdownOTelCollector();
       return;
     }
     plans = selected;
@@ -538,30 +519,22 @@ async function cmdWork(args: string[]) {
 
   if (plans.length === 0) {
     console.log(`No plans to work on`);
-    await shutdownOTelCollector();
     return;
   }
 
   // Pre-check usage before starting
-  const canProceed = await checkUsageBeforeWork(plans.length, config);
+  const canProceed = await checkUsageBeforeWork();
   if (!canProceed) {
     console.error(`Cannot start work due to usage limits`);
-    await shutdownOTelCollector();
     process.exit(1);
   }
 
-  // Get OTel environment variables
-  const otelEnv = getClaudeOTelEnv();
-
   // Start work
   if (plans.length === 1) {
-    await startWork(plans[0], otelEnv);
+    await startWork(plans[0]);
   } else {
-    await startWorkMultiple(plans, otelEnv);
+    await startWorkMultiple(plans);
   }
-
-  // Cleanup
-  await shutdownOTelCollector();
 }
 
 function cmdCheckout(args: string[]) {
@@ -1152,26 +1125,68 @@ async function cmdCancel(args: string[]) {
 }
 
 async function cmdUsage() {
-  const config = loadConfig();
+  try {
+    const usage = await fetchClaudeUsage();
 
-  if (!config.usageLimits?.enabled) {
-    console.log(`Usage monitoring is disabled`);
-    console.log(`Enable with: tracker config usageLimits.enabled true`);
-    return;
+    console.log(`\n${BOLD}Claude Usage:${RESET}`);
+
+    if (usage.fiveHour) {
+      const resetStr = formatResetTime(usage.fiveHour.resetsAt);
+      const pct = Math.round(usage.fiveHour.utilization * 100);
+      const color = pct >= 90 ? RED : pct >= 70 ? YELLOW : GREEN;
+      console.log(`  5-hour window:   ${color}${pct}%${RESET} ${DIM}(resets ${resetStr})${RESET}`);
+    }
+    if (usage.sevenDay) {
+      const resetStr = formatResetTime(usage.sevenDay.resetsAt);
+      const pct = Math.round(usage.sevenDay.utilization * 100);
+      const color = pct >= 90 ? RED : pct >= 70 ? YELLOW : GREEN;
+      console.log(`  7-day window:    ${color}${pct}%${RESET} ${DIM}(resets ${resetStr})${RESET}`);
+    }
+    if (usage.sevenDaySonnet) {
+      const resetStr = formatResetTime(usage.sevenDaySonnet.resetsAt);
+      const pct = Math.round(usage.sevenDaySonnet.utilization * 100);
+      const color = pct >= 90 ? RED : pct >= 70 ? YELLOW : GREEN;
+      console.log(`  7-day Sonnet:    ${color}${pct}%${RESET} ${DIM}(resets ${resetStr})${RESET}`);
+    }
+    if (usage.sevenDayOpus) {
+      const resetStr = formatResetTime(usage.sevenDayOpus.resetsAt);
+      const pct = Math.round(usage.sevenDayOpus.utilization * 100);
+      const color = pct >= 90 ? RED : pct >= 70 ? YELLOW : GREEN;
+      console.log(`  7-day Opus:      ${color}${pct}%${RESET} ${DIM}(resets ${resetStr})${RESET}`);
+    }
+    if (usage.extraUsage?.isEnabled) {
+      console.log(`  Extra usage:     ${GREEN}enabled${RESET}`);
+      if (usage.extraUsage.monthlyLimit != null && usage.extraUsage.usedCredits != null) {
+        console.log(`    Credits: $${usage.extraUsage.usedCredits.toFixed(2)} / $${usage.extraUsage.monthlyLimit.toFixed(2)}`);
+      }
+    }
+
+    console.log();
+  } catch (err: any) {
+    if (err.message?.includes("not authenticated")) {
+      console.log(`${DIM}Not authenticated with Claude. Run "claude" once to set up credentials.${RESET}`);
+    } else {
+      console.error(`${RED}Error fetching usage: ${err.message}${RESET}`);
+    }
   }
+}
 
-  await initOTelCollector();
-  const tracker = new UsageTracker();
-  const limits = buildUsageLimits(config.usageLimits);
-  const usage = await tracker.getCurrentUsage(limits);
+function formatResetTime(isoDate: string): string {
+  const reset = new Date(isoDate);
+  const now = new Date();
+  const diffMs = reset.getTime() - now.getTime();
+  if (diffMs <= 0) return "now";
 
-  console.log(`\n${BOLD}Current Usage:${RESET}`);
-  console.log(`  Input tokens/min:  ${Math.floor(usage.inputTokensPerMinute)} / ${limits.maxInputTokensPerMinute}`);
-  console.log(`  Requests/min:      ${Math.floor(usage.requestsPerMinute)} / ${limits.maxRequestsPerMinute}`);
-  console.log(`  Available tokens:  ${Math.floor(usage.availableInputTokens)}`);
-  console.log(`  Total cost:        $${usage.totalCostUSD.toFixed(2)}`);
+  const hours = Math.floor(diffMs / (1000 * 60 * 60));
+  const minutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
 
-  await shutdownOTelCollector();
+  if (hours >= 24) {
+    const days = Math.floor(hours / 24);
+    const remainingHours = hours % 24;
+    return `in ${days}d ${remainingHours}h`;
+  }
+  if (hours > 0) return `in ${hours}h ${minutes}m`;
+  return `in ${minutes}m`;
 }
 
 function cmdConfig(args: string[]) {
@@ -1187,7 +1202,7 @@ function cmdConfig(args: string[]) {
 
   const key = args[0];
 
-  // Handle nested keys (e.g., "usageLimits.enabled")
+  // Handle nested keys (e.g., "worktree.enabled")
   if (key.includes('.')) {
     const parts = key.split('.');
 
@@ -1231,7 +1246,7 @@ function cmdConfig(args: string[]) {
   const typedKey = key as keyof TrackerConfig;
   if (!(typedKey in CONFIG_KEYS)) {
     console.error(`${RED}Error: Unknown config key "${key}"${RESET}`);
-    console.error(`${DIM}Valid keys: ${Object.keys(CONFIG_KEYS).join(", ")}, or nested keys like usageLimits.enabled${RESET}`);
+    console.error(`${DIM}Valid keys: ${Object.keys(CONFIG_KEYS).join(", ")}, or nested keys like worktree.enabled${RESET}`);
     process.exit(1);
   }
 
@@ -1260,7 +1275,7 @@ function cmdConfig(args: string[]) {
       process.exit(1);
     }
   } else {
-    console.error(`${RED}Error: Cannot set object values directly, use nested keys like usageLimits.enabled${RESET}`);
+    console.error(`${RED}Error: Cannot set object values directly, use nested keys like worktree.enabled${RESET}`);
     process.exit(1);
   }
 

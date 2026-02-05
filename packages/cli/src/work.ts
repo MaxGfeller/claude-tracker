@@ -104,14 +104,12 @@ function spawnClaude(opts: {
   cwd: string;
   logWriter: Writer;
   promptFile?: string;
-  otelEnv?: Record<string, string>;
   silent?: boolean;
 }): Promise<{ code: number; output: string }> {
   return new Promise((resolve) => {
     const child = spawn("claude", opts.args, {
       cwd: opts.cwd,
       stdio: [opts.promptFile ? "pipe" : "ignore", "pipe", "pipe"],
-      env: { ...process.env, ...opts.otelEnv },
     });
 
     if (opts.promptFile) {
@@ -153,7 +151,6 @@ async function runReviewLoop(
   planContent: string,
   sessionId: string,
   logWriter: Writer,
-  otelEnv?: Record<string, string>,
   workingDir?: string
 ): Promise<void> {
   const cwd = workingDir ?? plan.project_path;
@@ -198,7 +195,6 @@ async function runReviewLoop(
       cwd,
       logWriter,
       promptFile: reviewPromptFile,
-      otelEnv,
       silent: true,
     });
 
@@ -233,7 +229,6 @@ async function runReviewLoop(
       cwd,
       logWriter,
       promptFile: revisionPromptFile,
-      otelEnv,
       silent: true,
     });
 
@@ -250,7 +245,7 @@ async function runReviewLoop(
   );
 }
 
-export async function startWork(plan: Plan, otelEnv?: Record<string, string>): Promise<void> {
+export async function startWork(plan: Plan): Promise<void> {
   if (plan.status !== "open") {
     console.log(
       `${YELLOW}⚠${RESET} Plan ${BOLD}#${plan.id}${RESET} is "${plan.status}", skipping (only "open" plans can be worked on)`
@@ -388,12 +383,11 @@ export async function startWork(plan: Plan, otelEnv?: Record<string, string>): P
     cwd: workingDir,
     logWriter,
     promptFile,
-    otelEnv,
     silent: true,
   });
 
   if (workerResult.code === 0) {
-    await runReviewLoop(plan, planContent, sessionId, logWriter, otelEnv, workingDir);
+    await runReviewLoop(plan, planContent, sessionId, logWriter, workingDir);
 
     updateStatus(plan.id, "in-review");
     console.log(
@@ -409,13 +403,13 @@ export async function startWork(plan: Plan, otelEnv?: Record<string, string>): P
   logWriter.end();
 }
 
-async function runProjectPlansSequentially(plans: Plan[], otelEnv?: Record<string, string>): Promise<void> {
+async function runProjectPlansSequentially(plans: Plan[]): Promise<void> {
   for (const plan of plans) {
-    await startWork(plan, otelEnv);
+    await startWork(plan);
   }
 }
 
-export async function startWorkMultiple(plans: Plan[], otelEnv?: Record<string, string>): Promise<void> {
+export async function startWorkMultiple(plans: Plan[]): Promise<void> {
   // Group plans by project — sequential within a project, parallel across projects
   const byProject = new Map<string, Plan[]>();
   for (const plan of plans) {
@@ -426,7 +420,7 @@ export async function startWorkMultiple(plans: Plan[], otelEnv?: Record<string, 
 
   await Promise.all(
     Array.from(byProject.values()).map((projectPlans) =>
-      runProjectPlansSequentially(projectPlans, otelEnv)
+      runProjectPlansSequentially(projectPlans)
     )
   );
 

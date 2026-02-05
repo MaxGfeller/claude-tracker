@@ -14,14 +14,6 @@ export interface WorktreeConfig {
 export interface TrackerConfig {
   skipPermissions?: boolean;
   maxReviewRounds?: number;
-  usageLimits?: {
-    enabled: boolean;
-    minAvailableInputTokens: number;
-    minAvailableRequests: number;
-    maxCostPerSession: number;
-    maxWaitMinutes: number;
-    organizationTier: 1 | 2 | 3 | 4 | null;
-  };
   worktree?: WorktreeConfig;
   shellFunctionInstalled?: boolean;
   firstCheckoutDone?: boolean;
@@ -30,14 +22,6 @@ export interface TrackerConfig {
 const DEFAULTS: TrackerConfig = {
   skipPermissions: false,
   maxReviewRounds: 5,
-  usageLimits: {
-    enabled: true,
-    minAvailableInputTokens: 10000,
-    minAvailableRequests: 5,
-    maxCostPerSession: 1.0,
-    maxWaitMinutes: 10,
-    organizationTier: null,
-  },
   worktree: {
     enabled: true,
     basePath: "~/.task-tracker/worktrees",
@@ -49,7 +33,6 @@ const DEFAULTS: TrackerConfig = {
 export const CONFIG_KEYS: Record<keyof TrackerConfig, "boolean" | "number" | "object"> = {
   skipPermissions: "boolean",
   maxReviewRounds: "number",
-  usageLimits: "object",
   worktree: "object",
   shellFunctionInstalled: "boolean",
   firstCheckoutDone: "boolean",

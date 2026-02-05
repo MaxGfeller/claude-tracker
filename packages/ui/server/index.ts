@@ -37,9 +37,7 @@ import {
   getBlockedTasks,
 } from "@tracker/cli/src/db";
 import { loadConfig } from "@tracker/cli/src/config";
-import { initOTelCollector, shutdownOTelCollector } from "@tracker/cli/src/otel-setup";
-import { UsageTracker } from "@tracker/cli/src/usage-tracker";
-import { buildUsageLimits } from "@tracker/cli/src/usage-check";
+import { fetchClaudeUsage } from "@tracker/cli/src/claude-usage";
 
 const PORT = parseInt(process.env.PORT ?? "3847", 10);
 const UI_DIR = resolve(import.meta.dir, "..");
@@ -80,48 +78,17 @@ async function handleRequest(req: Request): Promise<Response> {
     return jsonResponse(plans);
   }
 
-  // GET /api/usage - Get current usage and quota information
+  // GET /api/usage - Get current usage from Claude OAuth API
   if (pathname === "/api/usage" && method === "GET") {
-    const config = loadConfig();
-
-    if (!config.usageLimits?.enabled) {
-      return jsonResponse({
-        enabled: false,
-        message: "Usage monitoring is disabled",
-      });
-    }
-
     try {
-      await initOTelCollector();
-      const tracker = new UsageTracker();
-      const limits = buildUsageLimits(config.usageLimits);
-      const usage = await tracker.getCurrentUsage(limits);
-      await shutdownOTelCollector();
-
-      const usagePercent = Math.floor((usage.inputTokensPerMinute / limits.maxInputTokensPerMinute) * 100);
-
-      return jsonResponse({
-        enabled: true,
-        usage: {
-          inputTokensPerMinute: Math.floor(usage.inputTokensPerMinute),
-          requestsPerMinute: Math.floor(usage.requestsPerMinute),
-          totalCostUSD: parseFloat(usage.totalCostUSD.toFixed(2)),
-          availableInputTokens: Math.floor(usage.availableInputTokens),
-          availableRequests: Math.floor(usage.availableRequests),
-          usagePercent,
-        },
-        limits: {
-          maxInputTokensPerMinute: limits.maxInputTokensPerMinute,
-          maxRequestsPerMinute: limits.maxRequestsPerMinute,
-          maxCostPerSession: limits.maxCostPerSession,
-          minAvailableInputTokens: limits.minAvailableInputTokens,
-          minAvailableRequests: limits.minAvailableRequests,
-        },
-        config: config.usageLimits,
-      });
+      const usage = await fetchClaudeUsage();
+      return jsonResponse({ authenticated: true, ...usage });
     } catch (error: any) {
+      if (error.message?.includes("not authenticated")) {
+        return jsonResponse({ authenticated: false, message: "Not authenticated with Claude" });
+      }
       return jsonResponse({
-        enabled: true,
+        authenticated: false,
         error: error.message || "Failed to fetch usage data",
       }, 500);
     }
