@@ -9,6 +9,7 @@ export interface Plan {
   branch: string | null;
   session_id: string | null;
   planning_session_id: string | null;
+  worktree_path: string | null;
   created_at: string;
   updated_at: string;
 }

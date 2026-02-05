@@ -13,6 +13,15 @@ import { PlanViewer } from "./PlanViewer";
 import { PlanEditor } from "./PlanEditor";
 import { startPlanWork, generatePlan, deleteTask, type Plan } from "../api";
 
+function formatWorktreePath(path: string): string {
+  // Abbreviate home directory with ~
+  const homeDir = path.match(/^\/Users\/[^/]+/)?.[0] || path.match(/^\/home\/[^/]+/)?.[0];
+  if (homeDir) {
+    return "~" + path.slice(homeDir.length);
+  }
+  return path;
+}
+
 interface PlanCardProps {
   plan: Plan;
   onRefresh: () => void;
@@ -93,6 +102,23 @@ export function PlanCard({ plan, onRefresh }: PlanCardProps) {
             <span className="text-xs text-muted-foreground font-mono truncate">
               {plan.branch}
             </span>
+          )}
+          {plan.worktree_path && (
+            <div className="flex items-center gap-1 text-xs text-muted-foreground font-mono truncate">
+              <span title={plan.worktree_path} className="truncate">
+                {formatWorktreePath(plan.worktree_path)}
+              </span>
+              <button
+                onClick={() => navigator.clipboard.writeText(plan.worktree_path!)}
+                className="p-0.5 hover:text-foreground transition-colors"
+                title="Copy path"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect width="14" height="14" x="8" y="8" rx="2" ry="2"/>
+                  <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
+                </svg>
+              </button>
+            </div>
           )}
           <div className="flex flex-wrap items-center gap-2 mt-1">
             {/* Primary actions as buttons */}

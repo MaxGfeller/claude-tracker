@@ -4,6 +4,13 @@ import { readFileSync, writeFileSync, mkdirSync } from "fs";
 
 export const CONFIG_PATH = join(homedir(), ".local", "share", "task-tracker", "config.json");
 
+export interface WorktreeConfig {
+  enabled: boolean;
+  basePath: string;
+  copyGitignored: boolean;
+  autoCleanupOnComplete: boolean;
+}
+
 export interface TrackerConfig {
   skipPermissions?: boolean;
   maxReviewRounds?: number;
@@ -15,6 +22,7 @@ export interface TrackerConfig {
     maxWaitMinutes: number;
     organizationTier: 1 | 2 | 3 | 4 | null;
   };
+  worktree?: WorktreeConfig;
 }
 
 const DEFAULTS: TrackerConfig = {
@@ -28,12 +36,19 @@ const DEFAULTS: TrackerConfig = {
     maxWaitMinutes: 10,
     organizationTier: null,
   },
+  worktree: {
+    enabled: true,
+    basePath: "~/.task-tracker/worktrees",
+    copyGitignored: true,
+    autoCleanupOnComplete: false,
+  },
 };
 
 export const CONFIG_KEYS: Record<keyof TrackerConfig, "boolean" | "number" | "object"> = {
   skipPermissions: "boolean",
   maxReviewRounds: "number",
   usageLimits: "object",
+  worktree: "object",
 };
 
 export function loadConfig(): TrackerConfig {

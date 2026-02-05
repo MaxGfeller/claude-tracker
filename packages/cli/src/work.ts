@@ -1,10 +1,11 @@
-import { type Plan, updateStatus, updateBranch, updateSessionId } from "./db";
+import { type Plan, updateStatus, updateBranch, updateSessionId, updateWorktreePath } from "./db";
 import { loadConfig } from "./config";
 import { randomUUID } from "crypto";
 import { readFileSync, writeFileSync, mkdirSync, existsSync, unlinkSync } from "fs";
 import { join } from "path";
 import { tmpdir, homedir } from "os";
-import { spawn, execSync } from "child_process";
+import { spawn, execSync, spawnSync } from "child_process";
+import { createWorktree, checkGitVersion, formatWorktreePath } from "./worktree";
 
 const LOGS_DIR = join(homedir(), ".local", "share", "task-tracker", "logs");
 const MAX_REVIEW_ROUNDS = loadConfig().maxReviewRounds!;
@@ -152,8 +153,11 @@ async function runReviewLoop(
   planContent: string,
   sessionId: string,
   logWriter: Writer,
-  otelEnv?: Record<string, string>
+  otelEnv?: Record<string, string>,
+  workingDir?: string
 ): Promise<void> {
+  const cwd = workingDir ?? plan.project_path;
+
   for (let round = 1; round <= MAX_REVIEW_ROUNDS; round++) {
     console.log(`  ${DIM}Review round ${round}/${MAX_REVIEW_ROUNDS}...${RESET}`);
 
@@ -161,7 +165,7 @@ async function runReviewLoop(
     let diff: string;
     try {
       diff = execSync("git diff main...HEAD", {
-        cwd: plan.project_path,
+        cwd,
         encoding: "utf-8",
         maxBuffer: 10 * 1024 * 1024,
       });
@@ -187,7 +191,7 @@ async function runReviewLoop(
         "--output-format",
         "stream-json",
       ],
-      cwd: plan.project_path,
+      cwd,
       logWriter,
       promptFile: reviewPromptFile,
       otelEnv,
@@ -222,7 +226,7 @@ async function runReviewLoop(
         "--output-format",
         "stream-json",
       ],
-      cwd: plan.project_path,
+      cwd,
       logWriter,
       promptFile: revisionPromptFile,
       otelEnv,
@@ -250,6 +254,8 @@ export async function startWork(plan: Plan, otelEnv?: Record<string, string>): P
     return;
   }
 
+  const config = loadConfig();
+  const worktreeEnabled = config.worktree?.enabled ?? true;
   const slug = slugify(plan.plan_title ?? "untitled");
   const branch = `plan/${plan.id}-${slug}`;
 
@@ -259,39 +265,63 @@ export async function startWork(plan: Plan, otelEnv?: Record<string, string>): P
   console.log(`  ${DIM}Branch: ${branch}${RESET}`);
   console.log(`  ${DIM}Project: ${plan.project_path}${RESET}`);
 
-  // Return to main branch before creating feature branch
-  try {
-    const mainResult = Bun.spawnSync(["git", "checkout", "main"], {
-      cwd: plan.project_path,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+  let workingDir = plan.project_path;
+  let worktreePath: string | null = null;
 
-    if (mainResult.exitCode !== 0) {
-      const stderr = mainResult.stderr.toString().trim();
-      console.error(`${RED}✗${RESET} Failed to checkout main: ${stderr}`);
+  // Check if worktree mode is enabled and git supports it
+  const useWorktree = worktreeEnabled && checkGitVersion().supported;
+
+  if (useWorktree) {
+    // Create worktree with the branch
+    const wtResult = createWorktree(plan.project_path, branch, plan.id);
+    if (wtResult.ok) {
+      workingDir = wtResult.path;
+      worktreePath = wtResult.path;
+      console.log(`  ${DIM}Worktree: ${formatWorktreePath(wtResult.path)}${RESET}`);
+    } else {
+      console.log(`  ${YELLOW}⚠${RESET} Failed to create worktree: ${wtResult.error}`);
+      console.log(`  ${DIM}Falling back to branch in main repo${RESET}`);
+    }
+  }
+
+  // If not using worktree, create branch in main repo
+  if (!worktreePath) {
+    try {
+      const mainResult = Bun.spawnSync(["git", "checkout", "main"], {
+        cwd: plan.project_path,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      if (mainResult.exitCode !== 0) {
+        const stderr = mainResult.stderr.toString().trim();
+        console.error(`${RED}✗${RESET} Failed to checkout main: ${stderr}`);
+        return;
+      }
+
+      const branchResult = Bun.spawnSync(["git", "checkout", "-b", branch], {
+        cwd: plan.project_path,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      if (branchResult.exitCode !== 0) {
+        const stderr = branchResult.stderr.toString().trim();
+        console.error(`${RED}✗${RESET} Failed to create branch: ${stderr}`);
+        return;
+      }
+    } catch (e: any) {
+      console.error(`${RED}✗${RESET} Git error: ${e.message}`);
       return;
     }
-
-    const branchResult = Bun.spawnSync(["git", "checkout", "-b", branch], {
-      cwd: plan.project_path,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    if (branchResult.exitCode !== 0) {
-      const stderr = branchResult.stderr.toString().trim();
-      console.error(`${RED}✗${RESET} Failed to create branch: ${stderr}`);
-      return;
-    }
-  } catch (e: any) {
-    console.error(`${RED}✗${RESET} Git error: ${e.message}`);
-    return;
   }
 
   // Update DB
   updateStatus(plan.id, "in-progress");
   updateBranch(plan.id, branch);
+  if (worktreePath) {
+    updateWorktreePath(plan.id, worktreePath);
+  }
   const sessionId = randomUUID();
   updateSessionId(plan.id, sessionId);
 
@@ -334,7 +364,7 @@ export async function startWork(plan: Plan, otelEnv?: Record<string, string>): P
       "--output-format",
       "stream-json",
     ],
-    cwd: plan.project_path,
+    cwd: workingDir,
     logWriter,
     promptFile,
     otelEnv,
@@ -342,7 +372,7 @@ export async function startWork(plan: Plan, otelEnv?: Record<string, string>): P
   });
 
   if (workerResult.code === 0) {
-    await runReviewLoop(plan, planContent, sessionId, logWriter, otelEnv);
+    await runReviewLoop(plan, planContent, sessionId, logWriter, otelEnv, workingDir);
 
     updateStatus(plan.id, "in-review");
     console.log(

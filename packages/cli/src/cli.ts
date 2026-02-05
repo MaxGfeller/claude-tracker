@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { addPlan, listPlans, updateStatus, getPlan, deletePlan, createTask, updatePlanPath, type Plan } from "./db";
+import { addPlan, listPlans, updateStatus, getPlan, deletePlan, createTask, updatePlanPath, updateWorktreePath, type Plan } from "./db";
 import { parsePlanTitle } from "./plans";
 import { startWork, startWorkMultiple } from "./work";
 import { selectPlans } from "./select";
@@ -14,6 +14,13 @@ import { resolve, dirname, join } from "path";
 import { spawnSync } from "child_process";
 import { homedir } from "os";
 import { confirm } from "@inquirer/prompts";
+import {
+  createWorktree,
+  worktreeExists,
+  getWorktreePath,
+  formatWorktreePath,
+  checkGitVersion,
+} from "./worktree";
 
 const RESET = "\x1b[0m";
 const BOLD = "\x1b[1m";
@@ -110,6 +117,9 @@ ${BOLD}Config keys:${RESET}
   usageLimits.maxCostPerSession          (number)   Max cost in USD per session (default: 1.0)
   usageLimits.maxWaitMinutes             (number)   Max wait time for quota reset (default: 10)
   usageLimits.organizationTier           (number)   Claude tier 1-4 (default: auto-detect)
+  worktree.enabled                       (boolean)  Use git worktrees for isolation (default: true)
+  worktree.copyGitignored                (boolean)  Copy .env files to worktrees (default: true)
+  worktree.autoCleanupOnComplete         (boolean)  Remove worktree on completion (default: false)
 
 ${BOLD}Examples:${RESET}
   tracker create "Add user authentication"
@@ -317,8 +327,9 @@ function cmdList() {
       const title = p.plan_title ?? "(untitled)";
       const date = formatDate(p.created_at);
       const branchInfo = p.status === "in-review" && p.branch ? ` ${CYAN}${p.branch}${RESET}` : "";
+      const worktreeInfo = p.worktree_path ? `\n      ${DIM}Worktree: ${formatWorktreePath(p.worktree_path)}${RESET}` : "";
       console.log(
-        `  ${color}${icon}${RESET} ${BOLD}#${p.id}${RESET} ${title} ${DIM}[${p.status}] ${date}${RESET}${branchInfo}`
+        `  ${color}${icon}${RESET} ${BOLD}#${p.id}${RESET} ${title} ${DIM}[${p.status}] ${date}${RESET}${branchInfo}${worktreeInfo}`
       );
     }
   }
@@ -454,6 +465,9 @@ function cmdCheckout(args: string[]) {
     process.exit(1);
   }
 
+  const config = loadConfig();
+  const worktreeEnabled = config.worktree?.enabled ?? true;
+
   console.log(
     `${BOLD}▶${RESET} Checking out plan ${BOLD}#${plan.id}${RESET}: ${plan.plan_title ?? "(untitled)"}`
   );
@@ -461,30 +475,66 @@ function cmdCheckout(args: string[]) {
   console.log(`  ${DIM}Session: ${plan.session_id}${RESET}`);
   console.log(`  ${DIM}Project: ${plan.project_path}${RESET}`);
 
-  // Checkout the branch
-  const result = Bun.spawnSync(["git", "checkout", plan.branch], {
-    cwd: plan.project_path,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+  let workingDir = plan.project_path;
 
-  if (result.exitCode !== 0) {
-    const stderr = result.stderr.toString().trim();
-    console.error(`${RED}✗${RESET} Failed to checkout branch: ${stderr}`);
-    process.exit(1);
+  // If worktree mode is enabled, create/use a worktree
+  if (worktreeEnabled) {
+    const gitVersion = checkGitVersion();
+    if (!gitVersion.supported) {
+      console.log(`  ${YELLOW}⚠${RESET} Git worktrees require git 2.5+ (found ${gitVersion.version}), falling back to branch checkout`);
+    } else {
+      // Check if worktree already exists or create one
+      if (worktreeExists(plan.project_path, plan.id)) {
+        workingDir = getWorktreePath(plan.project_path, plan.id);
+        console.log(`  ${DIM}Worktree: ${formatWorktreePath(workingDir)}${RESET}`);
+      } else {
+        console.log(`  ${DIM}Creating worktree...${RESET}`);
+        const wtResult = createWorktree(plan.project_path, plan.branch, plan.id);
+        if (wtResult.ok) {
+          workingDir = wtResult.path;
+          updateWorktreePath(plan.id, wtResult.path);
+          console.log(`  ${GREEN}✓${RESET} Worktree created at ${CYAN}${formatWorktreePath(wtResult.path)}${RESET}`);
+        } else {
+          console.log(`  ${YELLOW}⚠${RESET} Failed to create worktree: ${wtResult.error}`);
+          console.log(`  ${DIM}Falling back to branch checkout${RESET}`);
+        }
+      }
+    }
   }
 
-  console.log(`${GREEN}✓${RESET} On branch ${CYAN}${plan.branch}${RESET}`);
-  console.log(`\n${DIM}Resuming Claude Code conversation...${RESET}\n`);
+  // If not using worktree, checkout the branch in the main repo
+  if (workingDir === plan.project_path) {
+    const result = Bun.spawnSync(["git", "checkout", plan.branch], {
+      cwd: plan.project_path,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    if (result.exitCode !== 0) {
+      const stderr = result.stderr.toString().trim();
+      console.error(`${RED}✗${RESET} Failed to checkout branch: ${stderr}`);
+      process.exit(1);
+    }
+    console.log(`${GREEN}✓${RESET} On branch ${CYAN}${plan.branch}${RESET}`);
+  } else {
+    console.log(`${GREEN}✓${RESET} Using worktree at ${CYAN}${formatWorktreePath(workingDir)}${RESET}`);
+  }
+
+  // If using worktree, print instructions to navigate
+  if (workingDir !== plan.project_path) {
+    console.log(`\n${BOLD}To navigate to the worktree:${RESET}`);
+    console.log(`  cd ${workingDir}\n`);
+  }
+
+  console.log(`${DIM}Resuming Claude Code conversation...${RESET}\n`);
 
   // Resume Claude Code conversation by session ID
   const claudeArgs = ["--resume", plan.session_id];
-  const config = loadConfig();
   if (config.skipPermissions) {
     claudeArgs.push("--dangerously-skip-permissions");
   }
   const claude = spawnSync("claude", claudeArgs, {
-    cwd: plan.project_path,
+    cwd: workingDir,
     stdio: "inherit",
   });
 

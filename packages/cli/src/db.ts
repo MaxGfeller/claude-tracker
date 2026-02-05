@@ -46,6 +46,9 @@ export function getDb(): Database {
   if (!cols.some((c) => c.name === "description")) {
     _db.run("ALTER TABLE plans ADD COLUMN description TEXT");
   }
+  if (!cols.some((c) => c.name === "worktree_path")) {
+    _db.run("ALTER TABLE plans ADD COLUMN worktree_path TEXT");
+  }
 
   return _db;
 }
@@ -61,6 +64,7 @@ export interface Plan {
   branch: string | null;
   session_id: string | null;
   planning_session_id: string | null;
+  worktree_path: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -172,4 +176,11 @@ export function updatePlanTitle(id: number, title: string): void {
   db.prepare(`
     UPDATE plans SET plan_title = ?, updated_at = datetime('now') WHERE id = ?
   `).run(title, id);
+}
+
+export function updateWorktreePath(id: number, worktreePath: string | null): void {
+  const db = getDb();
+  db.prepare(`
+    UPDATE plans SET worktree_path = ?, updated_at = datetime('now') WHERE id = ?
+  `).run(worktreePath, id);
 }
