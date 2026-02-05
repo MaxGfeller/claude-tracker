@@ -4,7 +4,7 @@ import { randomUUID } from "crypto";
 import { readFileSync, writeFileSync, mkdirSync, existsSync, unlinkSync } from "fs";
 import { join } from "path";
 import { tmpdir, homedir } from "os";
-import { spawn, execSync, spawnSync } from "child_process";
+import { spawn, execSync } from "child_process";
 import { createWorktree, checkGitVersion, formatWorktreePath } from "./worktree";
 
 const LOGS_DIR = join(homedir(), ".local", "share", "task-tracker", "logs");

@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, cpSync, readdirSync, statSync } from "fs";
-import { join, basename, relative, resolve } from "path";
+import { join, resolve } from "path";
 import { homedir } from "os";
 import { spawnSync } from "child_process";
 import { parseGitignore, matchesGitignore } from "./gitignore";

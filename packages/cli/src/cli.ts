@@ -9,7 +9,7 @@ import { initOTelCollector, shutdownOTelCollector, getClaudeOTelEnv } from "./ot
 import { checkUsageBeforeWork } from "./usage-check";
 import { UsageTracker } from "./usage-tracker";
 import { buildUsageLimits } from "./usage-check";
-import { existsSync, mkdirSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, writeFileSync, readdirSync } from "fs";
 import { resolve, dirname, join } from "path";
 import { spawnSync } from "child_process";
 import { homedir } from "os";
@@ -20,6 +20,9 @@ import {
   getWorktreePath,
   formatWorktreePath,
   checkGitVersion,
+  removeWorktree,
+  getWorktreeBase,
+  getProjectId,
 } from "./worktree";
 
 const RESET = "\x1b[0m";
@@ -103,6 +106,7 @@ ${BOLD}Usage:${RESET}
   tracker complete [id] --db-only         Mark completed without git operations
   tracker reset <id>                      Reset plan to open, optionally deleting its branch
   tracker cancel <id>                     Cancel a plan, deleting it and its branch
+  tracker cleanup                         Remove orphaned worktrees (no matching task)
   tracker config                          Show all config values
   tracker config <key>                    Get a config value
   tracker config <key> <value>            Set a config value
@@ -483,12 +487,23 @@ function cmdCheckout(args: string[]) {
     if (!gitVersion.supported) {
       console.log(`  ${YELLOW}⚠${RESET} Git worktrees require git 2.5+ (found ${gitVersion.version}), falling back to branch checkout`);
     } else {
-      // Check if worktree already exists or create one
+      const expectedPath = getWorktreePath(plan.project_path, plan.id);
+
+      // Check if worktree exists (handles manually deleted worktrees)
       if (worktreeExists(plan.project_path, plan.id)) {
-        workingDir = getWorktreePath(plan.project_path, plan.id);
+        workingDir = expectedPath;
+        // Update DB if worktree_path was not set (e.g., DB reset or manual worktree)
+        if (plan.worktree_path !== expectedPath) {
+          updateWorktreePath(plan.id, expectedPath);
+        }
         console.log(`  ${DIM}Worktree: ${formatWorktreePath(workingDir)}${RESET}`);
       } else {
-        console.log(`  ${DIM}Creating worktree...${RESET}`);
+        // Worktree doesn't exist - create it (handles manually deleted worktrees)
+        if (plan.worktree_path) {
+          console.log(`  ${YELLOW}⚠${RESET} Worktree was deleted, recreating...`);
+        } else {
+          console.log(`  ${DIM}Creating worktree...${RESET}`);
+        }
         const wtResult = createWorktree(plan.project_path, plan.branch, plan.id);
         if (wtResult.ok) {
           workingDir = wtResult.path;
@@ -497,6 +512,10 @@ function cmdCheckout(args: string[]) {
         } else {
           console.log(`  ${YELLOW}⚠${RESET} Failed to create worktree: ${wtResult.error}`);
           console.log(`  ${DIM}Falling back to branch checkout${RESET}`);
+          // Clear stale worktree_path from DB
+          if (plan.worktree_path) {
+            updateWorktreePath(plan.id, null);
+          }
         }
       }
     }
@@ -672,6 +691,19 @@ async function cmdComplete(args: string[]) {
   // Update status in DB
   updateStatus(plan.id, "completed");
   console.log(`\n${GREEN}✓${RESET} Plan ${BOLD}#${plan.id}${RESET} → ${GREEN}completed${RESET}`);
+
+  // Auto-cleanup worktree if configured
+  const config = loadConfig();
+  if (config.worktree?.autoCleanupOnComplete && plan.worktree_path) {
+    console.log(`  ${DIM}Cleaning up worktree...${RESET}`);
+    const cleanupResult = removeWorktree(plan.project_path, plan.id);
+    if (cleanupResult.ok) {
+      updateWorktreePath(plan.id, null);
+      console.log(`  ${GREEN}✓${RESET} Removed worktree at ${formatWorktreePath(plan.worktree_path)}`);
+    } else {
+      console.log(`  ${YELLOW}⚠${RESET} Failed to remove worktree: ${cleanupResult.error}`);
+    }
+  }
 }
 
 async function cmdReset(args: string[]) {
@@ -932,6 +964,100 @@ function cmdConfig(args: string[]) {
   console.log(`${GREEN}✓${RESET} ${BOLD}${key}${RESET} = ${parsed}`);
 }
 
+async function cmdCleanup() {
+  const worktreeBase = getWorktreeBase();
+
+  if (!existsSync(worktreeBase)) {
+    console.log(`${DIM}No worktrees directory found at ${worktreeBase}${RESET}`);
+    return;
+  }
+
+  const plans = listPlans();
+  const activePlanIds = new Set(plans.map((p) => p.id));
+
+  console.log(`${BOLD}▶${RESET} Scanning for orphaned worktrees...`);
+
+  let orphanedCount = 0;
+  let removedCount = 0;
+
+  // Scan all project directories
+  const projectDirs = readdirSync(worktreeBase);
+  for (const projectDir of projectDirs) {
+    const projectPath = join(worktreeBase, projectDir);
+    try {
+      const taskDirs = readdirSync(projectPath);
+      for (const taskDir of taskDirs) {
+        const taskId = parseInt(taskDir, 10);
+        if (isNaN(taskId)) continue;
+
+        // Check if this task still exists
+        if (!activePlanIds.has(taskId)) {
+          orphanedCount++;
+          const wtPath = join(projectPath, taskDir);
+          console.log(`  ${YELLOW}○${RESET} Orphaned worktree: ${formatWorktreePath(wtPath)} (task #${taskId} not found)`);
+        }
+      }
+    } catch {
+      // Skip if not a directory
+    }
+  }
+
+  if (orphanedCount === 0) {
+    console.log(`${GREEN}✓${RESET} No orphaned worktrees found`);
+    return;
+  }
+
+  const proceed = await confirm({
+    message: `Remove ${orphanedCount} orphaned worktree(s)?`,
+    default: false,
+  });
+
+  if (!proceed) {
+    console.log(`${DIM}Aborted.${RESET}`);
+    return;
+  }
+
+  // Remove orphaned worktrees
+  for (const projectDir of projectDirs) {
+    const projectPath = join(worktreeBase, projectDir);
+    try {
+      const taskDirs = readdirSync(projectPath);
+      for (const taskDir of taskDirs) {
+        const taskId = parseInt(taskDir, 10);
+        if (isNaN(taskId)) continue;
+
+        if (!activePlanIds.has(taskId)) {
+          const wtPath = join(projectPath, taskDir);
+          // Find the original project path from any plan with this project
+          const samplePlan = plans.find((p) => getProjectId(p.project_path) === projectDir);
+          if (samplePlan) {
+            const result = removeWorktree(samplePlan.project_path, taskId);
+            if (result.ok) {
+              console.log(`  ${GREEN}✓${RESET} Removed ${formatWorktreePath(wtPath)}`);
+              removedCount++;
+            } else {
+              console.log(`  ${RED}✗${RESET} Failed to remove ${formatWorktreePath(wtPath)}: ${result.error}`);
+            }
+          } else {
+            // No matching project found, try to remove directory directly
+            try {
+              spawnSync("rm", ["-rf", wtPath]);
+              console.log(`  ${GREEN}✓${RESET} Removed ${formatWorktreePath(wtPath)}`);
+              removedCount++;
+            } catch (e: any) {
+              console.log(`  ${RED}✗${RESET} Failed to remove ${formatWorktreePath(wtPath)}: ${e.message}`);
+            }
+          }
+        }
+      }
+    } catch {
+      // Skip
+    }
+  }
+
+  console.log(`\n${GREEN}✓${RESET} Removed ${removedCount} orphaned worktree(s)`);
+}
+
 function cmdUi(args: string[]) {
   const port = args[0] ?? "3847";
   const cliDir = dirname(new URL(import.meta.url).pathname);
@@ -1007,6 +1133,9 @@ switch (command) {
     break;
   case "cancel":
     await cmdCancel(args);
+    break;
+  case "cleanup":
+    await cmdCleanup();
     break;
   case "config":
     cmdConfig(args);
