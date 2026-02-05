@@ -65,6 +65,41 @@ export async function generatePlan(id: number): Promise<{ ok: boolean; message: 
   return res.json();
 }
 
+export async function getPlanStatus(id: number): Promise<{ status: "none" | "generating" | "complete"; planPath?: string }> {
+  const res = await fetch(`/api/plans/${id}/plan-status`);
+  return res.json();
+}
+
+// Poll for plan generation completion
+export async function waitForPlanGeneration(
+  id: number,
+  onProgress?: () => void,
+  pollInterval = 2000,
+  maxAttempts = 180 // 6 minutes max
+): Promise<{ ok: boolean; message: string; planPath?: string }> {
+  let attempts = 0;
+
+  while (attempts < maxAttempts) {
+    const status = await getPlanStatus(id);
+
+    if (status.status === "complete") {
+      return { ok: true, message: "Plan generated", planPath: status.planPath };
+    }
+
+    if (status.status === "none") {
+      // Generation didn't start or failed silently
+      return { ok: false, message: "Plan generation failed" };
+    }
+
+    // Still generating
+    onProgress?.();
+    await new Promise((resolve) => setTimeout(resolve, pollInterval));
+    attempts++;
+  }
+
+  return { ok: false, message: "Plan generation timed out" };
+}
+
 export async function fetchPlanContent(id: number): Promise<string> {
   const res = await fetch(`/api/plans/${id}/plan-content`);
   if (!res.ok) {

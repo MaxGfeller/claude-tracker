@@ -1,10 +1,26 @@
-import { existsSync, readFileSync } from "fs";
+import { existsSync, readFileSync, mkdirSync, writeFileSync } from "fs";
 import { join, resolve } from "path";
-import { spawn, spawnSync } from "child_process";
+import { spawn } from "child_process";
 import { createInterface } from "readline";
+import { homedir } from "os";
 import { handleSSELogs } from "./sse";
 import { handlePlanChat } from "./chat";
 import { trackChild, removeChild, getActiveChildCount } from "./children";
+
+// Track plans currently being generated
+const generatingPlans = new Map<number, { startedAt: Date }>();
+
+function isGeneratingPlan(id: number): boolean {
+  return generatingPlans.has(id);
+}
+
+function startGenerating(id: number): void {
+  generatingPlans.set(id, { startedAt: new Date() });
+}
+
+function stopGenerating(id: number): void {
+  generatingPlans.delete(id);
+}
 
 // Import DB functions from the CLI package via workspace
 import {
@@ -312,7 +328,25 @@ async function handleRequest(req: Request): Promise<Response> {
     return jsonResponse(result);
   }
 
-  // POST /api/plans/:id/plan - Generate a plan via Claude
+  // GET /api/plans/:id/plan-status - Check plan generation status
+  params = matchRoute(pathname, "/api/plans/:id/plan-status");
+  if (params && method === "GET") {
+    const id = parseInt(params.id, 10);
+    const plan = getPlan(id);
+    if (!plan) return jsonResponse({ error: "Not found" }, 404);
+
+    if (isGeneratingPlan(id)) {
+      return jsonResponse({ status: "generating" });
+    }
+
+    if (plan.plan_path && existsSync(plan.plan_path)) {
+      return jsonResponse({ status: "complete", planPath: plan.plan_path });
+    }
+
+    return jsonResponse({ status: "none" });
+  }
+
+  // POST /api/plans/:id/plan - Generate a plan via Claude (async)
   params = matchRoute(pathname, "/api/plans/:id/plan");
   if (params && method === "POST") {
     const id = parseInt(params.id, 10);
@@ -321,6 +355,10 @@ async function handleRequest(req: Request): Promise<Response> {
 
     if (!plan.plan_title) {
       return jsonResponse({ error: "Task has no title" }, 400);
+    }
+
+    if (isGeneratingPlan(id)) {
+      return jsonResponse({ ok: false, message: "Plan generation already in progress" }, 409);
     }
 
     // Build the prompt including description if available
@@ -342,42 +380,62 @@ Include:
 
 Start with a # heading. Output ONLY the plan markdown, no other text.`;
 
-    // Spawn Claude with -p flag (print mode) - no session ID needed for one-shot generation
+    // Mark as generating
+    startGenerating(id);
+
+    // Spawn Claude async with -p flag (print mode)
     const claudeArgs = ["-p", prompt];
-    const result = spawnSync("claude", claudeArgs, {
+    const child = spawn("claude", claudeArgs, {
       cwd: plan.project_path,
-      stdio: ["inherit", "pipe", "inherit"],
-      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "pipe"],
     });
 
-    if (result.status !== 0) {
-      return jsonResponse({ ok: false, message: `Claude exited with code ${result.status}` }, 500);
-    }
+    let stdout = "";
+    let stderr = "";
 
-    const output = result.stdout?.toString() ?? "";
+    child.stdout?.on("data", (data) => {
+      stdout += data.toString();
+    });
 
-    // Save plan to file
-    const { homedir } = await import("os");
-    const { mkdirSync, writeFileSync } = await import("fs");
+    child.stderr?.on("data", (data) => {
+      stderr += data.toString();
+    });
 
-    const plansDir = join(homedir(), ".claude", "plans");
-    if (!existsSync(plansDir)) {
-      mkdirSync(plansDir, { recursive: true });
-    }
+    child.on("close", (code) => {
+      stopGenerating(id);
 
-    const slug = plan.plan_title
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 50);
-    const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-    const planFileName = `${slug}-${timestamp}.md`;
-    const planPath = join(plansDir, planFileName);
+      if (code !== 0) {
+        console.error(`Claude plan generation failed for plan #${id}: exit code ${code}`);
+        if (stderr) console.error(`stderr: ${stderr}`);
+        return;
+      }
 
-    writeFileSync(planPath, output);
-    updatePlanPath(plan.id, planPath);
+      // Save plan to file
+      const plansDir = join(homedir(), ".claude", "plans");
+      if (!existsSync(plansDir)) {
+        mkdirSync(plansDir, { recursive: true });
+      }
 
-    return jsonResponse({ ok: true, message: "Plan generated", planPath });
+      const slug = plan.plan_title!
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 50);
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+      const planFileName = `${slug}-${timestamp}.md`;
+      const planPath = join(plansDir, planFileName);
+
+      writeFileSync(planPath, stdout);
+      updatePlanPath(plan.id, planPath);
+      console.log(`Plan generated for #${id}: ${planPath}`);
+    });
+
+    child.on("error", (err) => {
+      stopGenerating(id);
+      console.error(`Failed to spawn Claude for plan #${id}:`, err);
+    });
+
+    return jsonResponse({ ok: true, message: "Plan generation started", status: "generating" });
   }
 
   // GET /api/plans/:id/plan-content - Get the plan markdown content

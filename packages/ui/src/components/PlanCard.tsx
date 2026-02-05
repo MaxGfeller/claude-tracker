@@ -11,7 +11,7 @@ import {
 import { LogViewer } from "./LogViewer";
 import { PlanViewer } from "./PlanViewer";
 import { PlanEditor } from "./PlanEditor";
-import { startPlanWork, generatePlan, deleteTask, canStartWork, type Plan } from "../api";
+import { startPlanWork, generatePlan, waitForPlanGeneration, deleteTask, canStartWork, type Plan } from "../api";
 
 function formatWorktreePath(path: string): string {
   // Abbreviate home directory with ~
@@ -70,7 +70,15 @@ export function PlanCard({ plan, allPlans, onRefresh }: PlanCardProps) {
   const handleGeneratePlan = async () => {
     setGenerating(true);
     try {
-      const result = await generatePlan(plan.id);
+      // Start generation (returns immediately)
+      const startResult = await generatePlan(plan.id);
+      if (!startResult.ok) {
+        console.error("Failed to start plan generation:", startResult.message);
+        return;
+      }
+
+      // Poll for completion
+      const result = await waitForPlanGeneration(plan.id);
       if (result.ok) {
         onRefresh();
       } else {
@@ -111,7 +119,7 @@ export function PlanCard({ plan, allPlans, onRefresh }: PlanCardProps) {
   return (
     <>
       <Card className={isBlocked ? "opacity-60" : ""}>
-        <CardContent className="flex flex-col gap-2 py-3 px-3">
+        <CardContent className="flex flex-col gap-2 px-3">
           <div className="flex items-center gap-2">
             <span className="text-muted-foreground text-xs font-mono">#{plan.id}</span>
             <span className="text-xs text-muted-foreground truncate">{projectName}</span>
@@ -120,6 +128,49 @@ export function PlanCard({ plan, allPlans, onRefresh }: PlanCardProps) {
                 Blocked
               </span>
             )}
+            <div className="grow"></div>
+            {/* Secondary actions in dropdown */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button size="sm" variant="ghost" className="h-7 w-7 p-0">
+                  <span className="sr-only">More options</span>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="1" />
+                    <circle cx="12" cy="5" r="1" />
+                    <circle cx="12" cy="19" r="1" />
+                  </svg>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {hasPlan && (
+                  <DropdownMenuItem onClick={() => setViewerOpen(true)}>
+                    View Plan
+                  </DropdownMenuItem>
+                )}
+                {canEdit && (
+                  <DropdownMenuItem onClick={() => setEditorOpen(true)}>
+                    Edit Plan
+                  </DropdownMenuItem>
+                )}
+                {canViewLogs && (
+                  <DropdownMenuItem onClick={() => setLogOpen(true)}>
+                    View Logs
+                  </DropdownMenuItem>
+                )}
+                {isOpen && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      className="text-destructive focus:text-destructive"
+                      onClick={handleDelete}
+                      disabled={deleting}
+                    >
+                      {deleting ? "Deleting..." : "Delete Task"}
+                    </DropdownMenuItem>
+                  </>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
           <span className="font-medium text-sm leading-snug">{title}</span>
           {dependsOnTask && (
@@ -171,48 +222,6 @@ export function PlanCard({ plan, allPlans, onRefresh }: PlanCardProps) {
                 {starting ? "Starting..." : "Start Work"}
               </Button>
             )}
-            {/* Secondary actions in dropdown */}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button size="sm" variant="ghost" className="h-7 w-7 p-0">
-                  <span className="sr-only">More options</span>
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <circle cx="12" cy="12" r="1" />
-                    <circle cx="12" cy="5" r="1" />
-                    <circle cx="12" cy="19" r="1" />
-                  </svg>
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                {hasPlan && (
-                  <DropdownMenuItem onClick={() => setViewerOpen(true)}>
-                    View Plan
-                  </DropdownMenuItem>
-                )}
-                {canEdit && (
-                  <DropdownMenuItem onClick={() => setEditorOpen(true)}>
-                    Edit Plan
-                  </DropdownMenuItem>
-                )}
-                {canViewLogs && (
-                  <DropdownMenuItem onClick={() => setLogOpen(true)}>
-                    View Logs
-                  </DropdownMenuItem>
-                )}
-                {isOpen && (
-                  <>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem
-                      className="text-destructive focus:text-destructive"
-                      onClick={handleDelete}
-                      disabled={deleting}
-                    >
-                      {deleting ? "Deleting..." : "Delete Task"}
-                    </DropdownMenuItem>
-                  </>
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
           </div>
         </CardContent>
       </Card>

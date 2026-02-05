@@ -699,17 +699,24 @@ async function cmdComplete(args: string[]) {
 
   const cwd = plan.project_path;
   const branch = plan.branch;
+  const hasWorktree = plan.worktree_path && worktreeExists(plan.project_path, plan.id);
+  const mergeCwd = hasWorktree ? plan.worktree_path! : cwd;
 
   console.log(
     `${BOLD}▶${RESET} Completing plan ${BOLD}#${plan.id}${RESET}: ${plan.plan_title ?? "(untitled)"}`
   );
   console.log(`  ${DIM}Branch:  ${branch}${RESET}`);
-  console.log(`  ${DIM}Project: ${cwd}${RESET}\n`);
+  console.log(`  ${DIM}Project: ${cwd}${RESET}`);
+  if (hasWorktree) {
+    console.log(`  ${DIM}Worktree: ${formatWorktreePath(plan.worktree_path!)}${RESET}`);
+  }
+  console.log();
 
-  // Check for uncommitted changes
-  const status = git(["status", "--porcelain"], cwd);
+  // Check for uncommitted changes in the worktree (if exists) or main repo
+  const status = git(["status", "--porcelain"], mergeCwd);
   if (status.stdout) {
-    console.log(`${YELLOW}⚠${RESET} Working directory has uncommitted changes:\n`);
+    const location = hasWorktree ? "Worktree" : "Working directory";
+    console.log(`${YELLOW}⚠${RESET} ${location} has uncommitted changes:\n`);
     console.log(`${DIM}${status.stdout.trim()}${RESET}\n`);
     const proceed = await confirm({
       message: "Continue anyway? Uncommitted changes may interfere with the merge.",
@@ -724,16 +731,21 @@ async function cmdComplete(args: string[]) {
   // Fetch latest main
   git(["fetch", "origin", "main"], cwd); // best-effort, may fail if no remote
 
-  // Checkout the feature branch
-  let result = git(["checkout", branch], cwd);
-  if (!result.ok) {
-    console.error(`${RED}✗${RESET} Failed to checkout ${branch}: ${result.stderr}`);
-    process.exit(1);
+  // If using worktree, the feature branch is already checked out there
+  // If not using worktree, checkout the feature branch in the main repo
+  let result;
+  if (!hasWorktree) {
+    result = git(["checkout", branch], cwd);
+    if (!result.ok) {
+      console.error(`${RED}✗${RESET} Failed to checkout ${branch}: ${result.stderr}`);
+      process.exit(1);
+    }
+    console.log(`  Checked out ${CYAN}${branch}${RESET}`);
   }
-  console.log(`  Checked out ${CYAN}${branch}${RESET}`);
 
   // Merge main into feature branch (resolve conflicts here)
-  result = git(["merge", "main"], cwd);
+  // This happens in the worktree if one exists, otherwise in the main repo
+  result = git(["merge", "main"], mergeCwd);
   if (!result.ok) {
     console.error(`${RED}✗${RESET} Merge main into ${branch} failed — there may be conflicts:\n${result.stderr}`);
     console.error(`\n${DIM}Resolve conflicts on this branch, commit, then re-run this command.${RESET}`);
@@ -741,14 +753,18 @@ async function cmdComplete(args: string[]) {
   }
   console.log(`  Merged ${CYAN}main${RESET} into ${CYAN}${branch}${RESET}`);
 
-  // Checkout main
-  result = git(["checkout", "main"], cwd);
-  if (!result.ok) {
-    console.error(`${RED}✗${RESET} Failed to checkout main: ${result.stderr}`);
-    process.exit(1);
+  // If using worktree, we need to go back to main repo for the final merge
+  // Checkout main in main repo (should already be there, but ensure it)
+  if (!hasWorktree) {
+    result = git(["checkout", "main"], cwd);
+    if (!result.ok) {
+      console.error(`${RED}✗${RESET} Failed to checkout main: ${result.stderr}`);
+      process.exit(1);
+    }
   }
 
-  // Merge feature branch into main (should be clean now)
+  // Merge feature branch into main (should be clean now since we merged main into feature first)
+  // This always happens in the main repo
   result = git(["merge", branch, "-m", `Merge branch '${branch}'`], cwd);
   if (!result.ok) {
     console.error(`${RED}✗${RESET} Merge into main failed: ${result.stderr}`);
@@ -760,14 +776,14 @@ async function cmdComplete(args: string[]) {
   updateStatus(plan.id, "completed");
   console.log(`\n${GREEN}✓${RESET} Plan ${BOLD}#${plan.id}${RESET} → ${GREEN}completed${RESET}`);
 
-  // Auto-cleanup worktree if configured
+  // Optionally cleanup worktree if configured
   const config = loadConfig();
-  if (config.worktree?.autoCleanupOnComplete && plan.worktree_path) {
+  if (config.worktree?.autoCleanupOnComplete && hasWorktree) {
     console.log(`  ${DIM}Cleaning up worktree...${RESET}`);
     const cleanupResult = removeWorktree(plan.project_path, plan.id);
     if (cleanupResult.ok) {
       updateWorktreePath(plan.id, null);
-      console.log(`  ${GREEN}✓${RESET} Removed worktree at ${formatWorktreePath(plan.worktree_path)}`);
+      console.log(`  ${GREEN}✓${RESET} Removed worktree at ${formatWorktreePath(plan.worktree_path!)}`);
     } else {
       console.log(`  ${YELLOW}⚠${RESET} Failed to remove worktree: ${cleanupResult.error}`);
     }
