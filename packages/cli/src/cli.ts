@@ -9,7 +9,7 @@ import { initOTelCollector, shutdownOTelCollector, getClaudeOTelEnv } from "./ot
 import { checkUsageBeforeWork } from "./usage-check";
 import { UsageTracker } from "./usage-tracker";
 import { buildUsageLimits } from "./usage-check";
-import { existsSync, mkdirSync, writeFileSync, readdirSync } from "fs";
+import { existsSync, mkdirSync, writeFileSync, readdirSync, rmSync } from "fs";
 import { resolve, dirname, join } from "path";
 import { spawnSync } from "child_process";
 import { homedir } from "os";
@@ -1039,9 +1039,9 @@ async function cmdCleanup() {
               console.log(`  ${RED}✗${RESET} Failed to remove ${formatWorktreePath(wtPath)}: ${result.error}`);
             }
           } else {
-            // No matching project found, try to remove directory directly
+            // No matching project found, remove directory directly (cross-platform)
             try {
-              spawnSync("rm", ["-rf", wtPath]);
+              rmSync(wtPath, { recursive: true, force: true });
               console.log(`  ${GREEN}✓${RESET} Removed ${formatWorktreePath(wtPath)}`);
               removedCount++;
             } catch (e: any) {

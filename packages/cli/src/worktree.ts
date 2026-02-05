@@ -130,15 +130,15 @@ export function createWorktree(
     mkdirSync(parentDir, { recursive: true });
   }
 
-  // First, ensure the branch exists (create from current HEAD if needed)
+  // First, ensure the branch exists (create from main if needed)
   const branchCheck = spawnSync("git", ["rev-parse", "--verify", branchName], {
     cwd: projectPath,
     encoding: "utf-8",
   });
 
   if (branchCheck.status !== 0) {
-    // Branch doesn't exist, create it
-    const createBranch = spawnSync("git", ["branch", branchName], {
+    // Branch doesn't exist, create it from main
+    const createBranch = spawnSync("git", ["branch", branchName, "main"], {
       cwd: projectPath,
       encoding: "utf-8",
     });
@@ -245,7 +245,13 @@ export function copyGitignoredFiles(srcDir: string, destDir: string): void {
   }
 
   // Also look for any files matching common patterns in root
-  const entries = readdirSync(srcDir);
+  let entries: string[];
+  try {
+    entries = readdirSync(srcDir);
+  } catch {
+    // If we can't read the source directory, just return
+    return;
+  }
   for (const entry of entries) {
     const srcPath = join(srcDir, entry);
     const destPath = join(destDir, entry);

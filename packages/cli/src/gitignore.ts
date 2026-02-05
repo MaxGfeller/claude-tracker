@@ -173,30 +173,3 @@ export function matchesGitignore(
 
   return matched;
 }
-
-/**
- * Common patterns for environment/config files that should be copied
- */
-export const COMMON_ENV_PATTERNS = [
-  ".env",
-  ".env.*",
-  ".envrc",
-  "*.local",
-  "secrets.*",
-  "credentials.*",
-];
-
-/**
- * Check if a filename looks like an environment/config file
- */
-export function isEnvFile(filename: string): boolean {
-  const lower = filename.toLowerCase();
-  return (
-    lower.startsWith(".env") ||
-    lower === ".envrc" ||
-    lower.endsWith(".local") ||
-    lower.includes("secret") ||
-    lower.includes("credential") ||
-    lower.includes("config.local")
-  );
-}
