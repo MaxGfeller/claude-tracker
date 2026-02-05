@@ -1,6 +1,6 @@
 import { spawn } from "child_process";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
-import { updatePlanningSessionId, updatePlanPath, type Plan } from "@tracker/cli/src/db";
+import { updatePlanPath, type Plan } from "@tracker/cli/src/db";
 import { join } from "path";
 import { homedir } from "os";
 
@@ -8,14 +8,6 @@ import { homedir } from "os";
 let lastSavedPlanPath: string | null = null;
 
 export function handlePlanChat(plan: Plan, message: string): Response {
-  // Create or reuse planning session ID (must be valid UUID)
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  let sessionId = plan.planning_session_id;
-  if (!sessionId || !uuidRegex.test(sessionId)) {
-    sessionId = crypto.randomUUID();
-    updatePlanningSessionId(plan.id, sessionId);
-  }
-
   // Get current plan content if it exists
   let currentPlan = "";
   if (plan.plan_path && existsSync(plan.plan_path)) {
@@ -64,14 +56,13 @@ When you create or update the plan, output the FULL plan wrapped in <plan> tags 
     },
   });
 
-  // Spawn Claude with streaming
+  // Spawn Claude with streaming (no session ID - we provide full context each time)
   const claudeArgs = [
     "-p",
     contextPrompt,
-    "--session-id",
-    sessionId,
     "--output-format",
     "stream-json",
+    "--verbose",
   ];
 
   const child = spawn("claude", claudeArgs, {
