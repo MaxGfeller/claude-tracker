@@ -973,7 +973,17 @@ async function cmdCleanup() {
   }
 
   const plans = listPlans();
-  const activePlanIds = new Set(plans.map((p) => p.id));
+
+  // Build a map of projectId -> Set of task IDs for that project
+  // This ensures we check both project AND task ID match
+  const projectTaskMap = new Map<string, Set<number>>();
+  for (const plan of plans) {
+    const projectId = getProjectId(plan.project_path);
+    if (!projectTaskMap.has(projectId)) {
+      projectTaskMap.set(projectId, new Set());
+    }
+    projectTaskMap.get(projectId)!.add(plan.id);
+  }
 
   console.log(`${BOLD}▶${RESET} Scanning for orphaned worktrees...`);
 
@@ -984,17 +994,19 @@ async function cmdCleanup() {
   const projectDirs = readdirSync(worktreeBase);
   for (const projectDir of projectDirs) {
     const projectPath = join(worktreeBase, projectDir);
+    const projectTaskIds = projectTaskMap.get(projectDir) ?? new Set();
+
     try {
       const taskDirs = readdirSync(projectPath);
       for (const taskDir of taskDirs) {
         const taskId = parseInt(taskDir, 10);
         if (isNaN(taskId)) continue;
 
-        // Check if this task still exists
-        if (!activePlanIds.has(taskId)) {
+        // Check if this task exists for THIS specific project
+        if (!projectTaskIds.has(taskId)) {
           orphanedCount++;
           const wtPath = join(projectPath, taskDir);
-          console.log(`  ${YELLOW}○${RESET} Orphaned worktree: ${formatWorktreePath(wtPath)} (task #${taskId} not found)`);
+          console.log(`  ${YELLOW}○${RESET} Orphaned worktree: ${formatWorktreePath(wtPath)} (task #${taskId} not found for project)`);
         }
       }
     } catch {
@@ -1020,13 +1032,16 @@ async function cmdCleanup() {
   // Remove orphaned worktrees
   for (const projectDir of projectDirs) {
     const projectPath = join(worktreeBase, projectDir);
+    const projectTaskIds = projectTaskMap.get(projectDir) ?? new Set();
+
     try {
       const taskDirs = readdirSync(projectPath);
       for (const taskDir of taskDirs) {
         const taskId = parseInt(taskDir, 10);
         if (isNaN(taskId)) continue;
 
-        if (!activePlanIds.has(taskId)) {
+        // Check if this task exists for THIS specific project
+        if (!projectTaskIds.has(taskId)) {
           const wtPath = join(projectPath, taskDir);
           // Find the original project path from any plan with this project
           const samplePlan = plans.find((p) => getProjectId(p.project_path) === projectDir);

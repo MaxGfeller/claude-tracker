@@ -261,14 +261,17 @@ export function copyGitignoredFiles(srcDir: string, destDir: string): void {
       continue;
     }
 
-    // Skip directories and common large/generated directories
+    // Get file stats once for all checks
+    let fileStat;
     try {
-      const stat = statSync(srcPath);
-      if (stat.isDirectory()) {
-        continue;
-      }
+      fileStat = statSync(srcPath);
     } catch {
       // File may have been deleted or is inaccessible - skip it
+      continue;
+    }
+
+    // Skip directories
+    if (fileStat.isDirectory()) {
       continue;
     }
 
@@ -278,13 +281,7 @@ export function copyGitignoredFiles(srcDir: string, destDir: string): void {
     }
 
     // Skip large files (> 10MB)
-    try {
-      const stat = statSync(srcPath);
-      if (stat.size > 10 * 1024 * 1024) {
-        continue;
-      }
-    } catch {
-      // File may have been deleted or is inaccessible - skip it
+    if (fileStat.size > 10 * 1024 * 1024) {
       continue;
     }
 
