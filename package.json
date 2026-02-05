@@ -7,6 +7,7 @@
     "build:cli": "bun build packages/cli/src/cli.ts --outdir packages/cli/dist --target bun",
     "build:ui": "cd packages/ui && bun run build",
     "cli": "bun run packages/cli/src/cli.ts",
+    "dev": "bun run ui & bun run ui:dev",
     "link": "cd packages/cli && bun link && ln -sfn $(pwd)/../skills/skills/tracker-plan ~/.claude/skills/tracker-plan",
     "ui": "bun run packages/ui/server/index.ts",
     "ui:dev": "cd packages/ui && bun run dev"
