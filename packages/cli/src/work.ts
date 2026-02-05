@@ -103,12 +103,14 @@ function spawnClaude(opts: {
   cwd: string;
   logWriter: Writer;
   promptFile?: string;
+  otelEnv?: Record<string, string>;
+  silent?: boolean;
 }): Promise<{ code: number; output: string }> {
   return new Promise((resolve) => {
     const child = spawn("claude", opts.args, {
       cwd: opts.cwd,
       stdio: [opts.promptFile ? "pipe" : "ignore", "pipe", "pipe"],
-      env: { ...process.env },
+      env: { ...process.env, ...opts.otelEnv },
     });
 
     if (opts.promptFile) {
@@ -121,14 +123,18 @@ function spawnClaude(opts: {
 
     child.stdout.on("data", (data: Buffer) => {
       const text = data.toString();
-      process.stdout.write(text);
+      if (!opts.silent) {
+        process.stdout.write(text);
+      }
       opts.logWriter.write(text);
       output += text;
     });
 
     child.stderr.on("data", (data: Buffer) => {
       const text = data.toString();
-      process.stderr.write(text);
+      if (!opts.silent) {
+        process.stderr.write(text);
+      }
       opts.logWriter.write(text);
     });
 
@@ -145,12 +151,11 @@ async function runReviewLoop(
   plan: Plan,
   planContent: string,
   sessionId: string,
-  logWriter: Writer
+  logWriter: Writer,
+  otelEnv?: Record<string, string>
 ): Promise<void> {
   for (let round = 1; round <= MAX_REVIEW_ROUNDS; round++) {
-    console.log(
-      `\n${CYAN}🔍${RESET} Review round ${BOLD}${round}/${MAX_REVIEW_ROUNDS}${RESET} — spawning reviewer...`
-    );
+    console.log(`  ${DIM}Review round ${round}/${MAX_REVIEW_ROUNDS}...${RESET}`);
 
     // Get diff against main
     let diff: string;
@@ -185,6 +190,8 @@ async function runReviewLoop(
       cwd: plan.project_path,
       logWriter,
       promptFile: reviewPromptFile,
+      otelEnv,
+      silent: true,
     });
 
     if (reviewResult.code !== 0) {
@@ -195,15 +202,11 @@ async function runReviewLoop(
     const verdict = parseVerdict(reviewResult.output);
 
     if (verdict.approved) {
-      console.log(
-        `\n${GREEN}✓${RESET} Reviewer ${BOLD}approved${RESET} — setting status to ${GREEN}in-review${RESET}`
-      );
+      console.log(`  ${GREEN}✓${RESET} Review approved`);
       return;
     }
 
-    console.log(
-      `\n${YELLOW}↻${RESET} Reviewer requested changes — resuming worker session...`
-    );
+    console.log(`  ${YELLOW}↻${RESET} Changes requested, revising...`);
 
     // Resume worker with feedback
     const revisionPrompt = buildRevisionPrompt(verdict.feedback);
@@ -222,6 +225,8 @@ async function runReviewLoop(
       cwd: plan.project_path,
       logWriter,
       promptFile: revisionPromptFile,
+      otelEnv,
+      silent: true,
     });
 
     if (workerResult.code !== 0) {
@@ -233,11 +238,11 @@ async function runReviewLoop(
   }
 
   console.log(
-    `\n${YELLOW}⚠${RESET} Max review rounds (${MAX_REVIEW_ROUNDS}) reached — setting status to ${GREEN}in-review${RESET}`
+    `  ${YELLOW}⚠${RESET} Max review rounds (${MAX_REVIEW_ROUNDS}) reached`
   );
 }
 
-export async function startWork(plan: Plan): Promise<void> {
+export async function startWork(plan: Plan, otelEnv?: Record<string, string>): Promise<void> {
   if (plan.status !== "open") {
     console.log(
       `${YELLOW}⚠${RESET} Plan ${BOLD}#${plan.id}${RESET} is "${plan.status}", skipping (only "open" plans can be worked on)`
@@ -315,6 +320,8 @@ export async function startWork(plan: Plan): Promise<void> {
   const logFile = Bun.file(logPath);
   const logWriter = logFile.writer();
 
+  console.log(`  ${DIM}Working...${RESET}\n`);
+
   // Invoke worker claude
   const workerResult = await spawnClaude({
     args: [
@@ -330,14 +337,12 @@ export async function startWork(plan: Plan): Promise<void> {
     cwd: plan.project_path,
     logWriter,
     promptFile,
+    otelEnv,
+    silent: true,
   });
 
   if (workerResult.code === 0) {
-    console.log(
-      `\n${GREEN}✓${RESET} Plan ${BOLD}#${plan.id}${RESET} worker completed — starting review loop`
-    );
-
-    await runReviewLoop(plan, planContent, sessionId, logWriter);
+    await runReviewLoop(plan, planContent, sessionId, logWriter, otelEnv);
 
     updateStatus(plan.id, "in-review");
     console.log(
@@ -353,13 +358,13 @@ export async function startWork(plan: Plan): Promise<void> {
   logWriter.end();
 }
 
-async function runProjectPlansSequentially(plans: Plan[]): Promise<void> {
+async function runProjectPlansSequentially(plans: Plan[], otelEnv?: Record<string, string>): Promise<void> {
   for (const plan of plans) {
-    await startWork(plan);
+    await startWork(plan, otelEnv);
   }
 }
 
-export async function startWorkMultiple(plans: Plan[]): Promise<void> {
+export async function startWorkMultiple(plans: Plan[], otelEnv?: Record<string, string>): Promise<void> {
   // Group plans by project — sequential within a project, parallel across projects
   const byProject = new Map<string, Plan[]>();
   for (const plan of plans) {
@@ -370,7 +375,7 @@ export async function startWorkMultiple(plans: Plan[]): Promise<void> {
 
   await Promise.all(
     Array.from(byProject.values()).map((projectPlans) =>
-      runProjectPlansSequentially(projectPlans)
+      runProjectPlansSequentially(projectPlans, otelEnv)
     )
   );
 

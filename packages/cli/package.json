@@ -7,6 +7,7 @@
     "tracker": "src/cli.ts"
   },
   "dependencies": {
-    "@inquirer/prompts": "^8.2.0"
+    "@inquirer/prompts": "^8.2.0",
+    "prom-client": "^15.1.0"
   }
 }

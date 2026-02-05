@@ -7,16 +7,33 @@ export const CONFIG_PATH = join(homedir(), ".local", "share", "task-tracker", "c
 export interface TrackerConfig {
   skipPermissions?: boolean;
   maxReviewRounds?: number;
+  usageLimits?: {
+    enabled: boolean;
+    minAvailableInputTokens: number;
+    minAvailableRequests: number;
+    maxCostPerSession: number;
+    maxWaitMinutes: number;
+    organizationTier: 1 | 2 | 3 | 4 | null;
+  };
 }
 
 const DEFAULTS: TrackerConfig = {
   skipPermissions: false,
   maxReviewRounds: 5,
+  usageLimits: {
+    enabled: false,
+    minAvailableInputTokens: 10000,
+    minAvailableRequests: 5,
+    maxCostPerSession: 1.0,
+    maxWaitMinutes: 10,
+    organizationTier: null,
+  },
 };
 
-export const CONFIG_KEYS: Record<keyof TrackerConfig, "boolean" | "number"> = {
+export const CONFIG_KEYS: Record<keyof TrackerConfig, "boolean" | "number" | "object"> = {
   skipPermissions: "boolean",
   maxReviewRounds: "number",
+  usageLimits: "object",
 };
 
 export function loadConfig(): TrackerConfig {

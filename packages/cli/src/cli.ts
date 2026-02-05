@@ -5,6 +5,10 @@ import { parsePlanTitle } from "./plans";
 import { startWork, startWorkMultiple } from "./work";
 import { selectPlans } from "./select";
 import { loadConfig, saveConfig, CONFIG_KEYS, CONFIG_PATH, type TrackerConfig } from "./config";
+import { initOTelCollector, shutdownOTelCollector, getClaudeOTelEnv } from "./otel-setup";
+import { checkUsageBeforeWork } from "./usage-check";
+import { UsageTracker } from "./usage-tracker";
+import { buildUsageLimits } from "./usage-check";
 import { existsSync } from "fs";
 import { resolve, dirname } from "path";
 import { spawnSync } from "child_process";
@@ -62,6 +66,7 @@ ${BOLD}Usage:${RESET}
   tracker list                            List all plans grouped by project
   tracker status <id> <status>            Update plan status (open|in-progress|completed|in-review)
   tracker work [id...]                    Start Claude Code on plans (interactive if no IDs)
+  tracker usage                           Show current usage and quota status
   tracker checkout <id>                   Checkout plan branch and resume Claude Code conversation
   tracker complete [id]                   Merge plan branch into main and mark completed
   tracker complete [id] --db-only         Mark completed without git operations
@@ -73,8 +78,14 @@ ${BOLD}Usage:${RESET}
   tracker ui [port]                       Launch web dashboard (default port: 3847)
 
 ${BOLD}Config keys:${RESET}
-  skipPermissions   (boolean)  Skip Claude permission prompts (default: false)
-  maxReviewRounds   (number)   Max review iterations per plan (default: 5)
+  skipPermissions                        (boolean)  Skip Claude permission prompts (default: false)
+  maxReviewRounds                        (number)   Max review iterations per plan (default: 5)
+  usageLimits.enabled                    (boolean)  Enable usage limit checking (default: false)
+  usageLimits.minAvailableInputTokens    (number)   Min tokens required to start (default: 10000)
+  usageLimits.minAvailableRequests       (number)   Min requests required to start (default: 5)
+  usageLimits.maxCostPerSession          (number)   Max cost in USD per session (default: 1.0)
+  usageLimits.maxWaitMinutes             (number)   Max wait time for quota reset (default: 10)
+  usageLimits.organizationTier           (number)   Claude tier 1-4 (default: auto-detect)
 
 ${BOLD}Examples:${RESET}
   tracker add ~/.claude/plans/my-plan.md /path/to/project
@@ -82,9 +93,11 @@ ${BOLD}Examples:${RESET}
   tracker status 1 in-progress
   tracker work
   tracker work 1 2
+  tracker usage
   tracker checkout 3
   tracker complete 3
   tracker reset 3
+  tracker config usageLimits.enabled true
   tracker ui
   tracker ui 8080`);
 }
@@ -178,26 +191,29 @@ function cmdStatus(args: string[]) {
 }
 
 async function cmdWork(args: string[]) {
+  const config = loadConfig();
+
+  // Initialize OTel collector
+  await initOTelCollector();
+
+  let plans: Plan[];
   if (args.length > 0) {
     // IDs provided directly
-    const plans: Plan[] = [];
+    plans = [];
     for (const idStr of args) {
       const id = parseInt(idStr, 10);
       if (isNaN(id)) {
         console.error(`${RED}Error: Invalid id "${idStr}"${RESET}`);
+        await shutdownOTelCollector();
         process.exit(1);
       }
       const plan = getPlan(id);
       if (!plan) {
         console.error(`${RED}Error: Plan #${id} not found${RESET}`);
+        await shutdownOTelCollector();
         process.exit(1);
       }
       plans.push(plan);
-    }
-    if (plans.length === 1) {
-      await startWork(plans[0]);
-    } else {
-      await startWorkMultiple(plans);
     }
   } else {
     // Interactive selection
@@ -205,19 +221,44 @@ async function cmdWork(args: string[]) {
     const openPlans = allPlans.filter((p) => p.status === "open");
     if (openPlans.length === 0) {
       console.log(`${DIM}No open plans available. Use "tracker add" to register a plan.${RESET}`);
+      await shutdownOTelCollector();
       return;
     }
     const selected = await selectPlans(allPlans);
     if (selected.length === 0) {
       console.log(`${DIM}No plans selected.${RESET}`);
+      await shutdownOTelCollector();
       return;
     }
-    if (selected.length === 1) {
-      await startWork(selected[0]);
-    } else {
-      await startWorkMultiple(selected);
-    }
+    plans = selected;
   }
+
+  if (plans.length === 0) {
+    console.log(`No plans to work on`);
+    await shutdownOTelCollector();
+    return;
+  }
+
+  // Pre-check usage before starting
+  const canProceed = await checkUsageBeforeWork(plans.length, config);
+  if (!canProceed) {
+    console.error(`Cannot start work due to usage limits`);
+    await shutdownOTelCollector();
+    process.exit(1);
+  }
+
+  // Get OTel environment variables
+  const otelEnv = getClaudeOTelEnv();
+
+  // Start work
+  if (plans.length === 1) {
+    await startWork(plans[0], otelEnv);
+  } else {
+    await startWorkMultiple(plans, otelEnv);
+  }
+
+  // Cleanup
+  await shutdownOTelCollector();
 }
 
 function cmdCheckout(args: string[]) {
@@ -559,36 +600,100 @@ async function cmdCancel(args: string[]) {
   console.log(`\n${GREEN}✓${RESET} Plan ${BOLD}#${plan.id}${RESET} cancelled and removed.`);
 }
 
+async function cmdUsage() {
+  const config = loadConfig();
+
+  if (!config.usageLimits?.enabled) {
+    console.log(`Usage monitoring is disabled`);
+    console.log(`Enable with: tracker config usageLimits.enabled true`);
+    return;
+  }
+
+  await initOTelCollector();
+  const tracker = new UsageTracker();
+  const limits = buildUsageLimits(config.usageLimits);
+  const usage = await tracker.getCurrentUsage(limits);
+
+  console.log(`\n${BOLD}Current Usage:${RESET}`);
+  console.log(`  Input tokens/min:  ${Math.floor(usage.inputTokensPerMinute)} / ${limits.maxInputTokensPerMinute}`);
+  console.log(`  Requests/min:      ${Math.floor(usage.requestsPerMinute)} / ${limits.maxRequestsPerMinute}`);
+  console.log(`  Available tokens:  ${Math.floor(usage.availableInputTokens)}`);
+  console.log(`  Total cost:        $${usage.totalCostUSD.toFixed(2)}`);
+
+  await shutdownOTelCollector();
+}
+
 function cmdConfig(args: string[]) {
   const config = loadConfig();
 
   if (args.length === 0) {
     // Show all config values
     console.log(`${BOLD}Config${RESET} ${DIM}(${CONFIG_PATH})${RESET}\n`);
-    for (const key of Object.keys(CONFIG_KEYS) as (keyof TrackerConfig)[]) {
-      console.log(`  ${BOLD}${key}${RESET} = ${config[key]}`);
-    }
+    console.log(JSON.stringify(config, null, 2));
     console.log();
     return;
   }
 
-  const key = args[0] as keyof TrackerConfig;
-  if (!(key in CONFIG_KEYS)) {
+  const key = args[0];
+
+  // Handle nested keys (e.g., "usageLimits.enabled")
+  if (key.includes('.')) {
+    const parts = key.split('.');
+
+    if (args.length === 1) {
+      // Get nested value
+      let value: any = config;
+      for (const part of parts) {
+        value = value?.[part];
+      }
+      console.log(`${BOLD}${key}${RESET} = ${JSON.stringify(value)}`);
+      return;
+    }
+
+    // Set nested value
+    const rawValue = args[1];
+    let parsed: any;
+
+    // Try to parse as boolean, number, or keep as string
+    if (rawValue === "true") parsed = true;
+    else if (rawValue === "false") parsed = false;
+    else if (rawValue === "null") parsed = null;
+    else if (!isNaN(Number(rawValue))) parsed = Number(rawValue);
+    else parsed = rawValue;
+
+    // Navigate to parent object
+    let obj: any = config;
+    for (let i = 0; i < parts.length - 1; i++) {
+      if (!(parts[i] in obj)) {
+        obj[parts[i]] = {};
+      }
+      obj = obj[parts[i]];
+    }
+    obj[parts[parts.length - 1]] = parsed;
+
+    saveConfig(config);
+    console.log(`${GREEN}✓${RESET} ${BOLD}${key}${RESET} = ${JSON.stringify(parsed)}`);
+    return;
+  }
+
+  // Handle top-level keys
+  const typedKey = key as keyof TrackerConfig;
+  if (!(typedKey in CONFIG_KEYS)) {
     console.error(`${RED}Error: Unknown config key "${key}"${RESET}`);
-    console.error(`${DIM}Valid keys: ${Object.keys(CONFIG_KEYS).join(", ")}${RESET}`);
+    console.error(`${DIM}Valid keys: ${Object.keys(CONFIG_KEYS).join(", ")}, or nested keys like usageLimits.enabled${RESET}`);
     process.exit(1);
   }
 
   if (args.length === 1) {
     // Get single value
-    console.log(`${BOLD}${key}${RESET} = ${config[key]}`);
+    console.log(`${BOLD}${key}${RESET} = ${JSON.stringify(config[typedKey])}`);
     return;
   }
 
   // Set value
   const rawValue = args[1];
-  const type = CONFIG_KEYS[key];
-  let parsed: boolean | number;
+  const type = CONFIG_KEYS[typedKey];
+  let parsed: boolean | number | object;
 
   if (type === "boolean") {
     if (rawValue === "true") parsed = true;
@@ -597,15 +702,18 @@ function cmdConfig(args: string[]) {
       console.error(`${RED}Error: "${key}" expects a boolean (true/false)${RESET}`);
       process.exit(1);
     }
-  } else {
+  } else if (type === "number") {
     parsed = parseInt(rawValue, 10);
     if (isNaN(parsed)) {
       console.error(`${RED}Error: "${key}" expects a number${RESET}`);
       process.exit(1);
     }
+  } else {
+    console.error(`${RED}Error: Cannot set object values directly, use nested keys like usageLimits.enabled${RESET}`);
+    process.exit(1);
   }
 
-  (config as any)[key] = parsed;
+  (config as any)[typedKey] = parsed;
   saveConfig(config);
   console.log(`${GREEN}✓${RESET} ${BOLD}${key}${RESET} = ${parsed}`);
 }
@@ -664,6 +772,9 @@ switch (command) {
     break;
   case "work":
     await cmdWork(args);
+    break;
+  case "usage":
+    await cmdUsage();
     break;
   case "checkout":
     cmdCheckout(args);
