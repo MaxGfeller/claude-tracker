@@ -5,6 +5,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
 import { LogViewer } from "./LogViewer";
@@ -93,19 +94,10 @@ export function PlanCard({ plan, onRefresh }: PlanCardProps) {
               {plan.branch}
             </span>
           )}
-          <div className="flex flex-wrap gap-2 mt-1">
-            {hasPlan && (
-              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setViewerOpen(true)}>
-                View Plan
-              </Button>
-            )}
-            {canEdit && (
-              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setEditorOpen(true)}>
-                Edit
-              </Button>
-            )}
+          <div className="flex flex-wrap items-center gap-2 mt-1">
+            {/* Primary actions as buttons */}
             {!hasPlan && isOpen && (
-              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={handleGeneratePlan} disabled={generating}>
+              <Button size="sm" className="h-7 text-xs" onClick={handleGeneratePlan} disabled={generating}>
                 {generating ? "Generating..." : "Generate Plan"}
               </Button>
             )}
@@ -114,34 +106,48 @@ export function PlanCard({ plan, onRefresh }: PlanCardProps) {
                 {starting ? "Starting..." : "Start Work"}
               </Button>
             )}
-            {canViewLogs && (
-              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setLogOpen(true)}>
-                View Logs
-              </Button>
-            )}
-            {isOpen && (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-xs">
-                    <span className="sr-only">More options</span>
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <circle cx="12" cy="12" r="1" />
-                      <circle cx="12" cy="5" r="1" />
-                      <circle cx="12" cy="19" r="1" />
-                    </svg>
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem
-                    className="text-destructive focus:text-destructive"
-                    onClick={handleDelete}
-                    disabled={deleting}
-                  >
-                    {deleting ? "Deleting..." : "Delete Task"}
+            {/* Secondary actions in dropdown */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button size="sm" variant="ghost" className="h-7 w-7 p-0">
+                  <span className="sr-only">More options</span>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="1" />
+                    <circle cx="12" cy="5" r="1" />
+                    <circle cx="12" cy="19" r="1" />
+                  </svg>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {hasPlan && (
+                  <DropdownMenuItem onClick={() => setViewerOpen(true)}>
+                    View Plan
                   </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
+                )}
+                {canEdit && (
+                  <DropdownMenuItem onClick={() => setEditorOpen(true)}>
+                    Edit Plan
+                  </DropdownMenuItem>
+                )}
+                {canViewLogs && (
+                  <DropdownMenuItem onClick={() => setLogOpen(true)}>
+                    View Logs
+                  </DropdownMenuItem>
+                )}
+                {isOpen && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      className="text-destructive focus:text-destructive"
+                      onClick={handleDelete}
+                      disabled={deleting}
+                    >
+                      {deleting ? "Deleting..." : "Delete Task"}
+                    </DropdownMenuItem>
+                  </>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </CardContent>
       </Card>
