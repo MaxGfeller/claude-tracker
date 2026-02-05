@@ -998,7 +998,7 @@ async function cmdCleanup() {
         }
       }
     } catch {
-      // Skip if not a directory
+      // Skip if not a directory or can't be read
     }
   }
 
@@ -1039,8 +1039,12 @@ async function cmdCleanup() {
               console.log(`  ${RED}✗${RESET} Failed to remove ${formatWorktreePath(wtPath)}: ${result.error}`);
             }
           } else {
-            // No matching project found, remove directory directly (cross-platform)
+            // No matching project found - the original project may have been deleted
+            // Try to clean up using git worktree prune on any project, then remove directory
             try {
+              // First try to prune any stale worktree references
+              spawnSync("git", ["worktree", "prune"], { cwd: process.cwd() });
+              // Then remove the directory (cross-platform)
               rmSync(wtPath, { recursive: true, force: true });
               console.log(`  ${GREEN}✓${RESET} Removed ${formatWorktreePath(wtPath)}`);
               removedCount++;
@@ -1051,7 +1055,7 @@ async function cmdCleanup() {
         }
       }
     } catch {
-      // Skip
+      // Skip if not a directory or can't be read
     }
   }
 

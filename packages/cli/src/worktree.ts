@@ -238,7 +238,7 @@ export function copyGitignoredFiles(srcDir: string, destDir: string): void {
         try {
           cpSync(srcPath, destPath);
         } catch {
-          // Silently ignore copy errors
+          // Silently ignore copy errors (file may be locked or have permission issues)
         }
       }
     }
@@ -268,6 +268,7 @@ export function copyGitignoredFiles(srcDir: string, destDir: string): void {
         continue;
       }
     } catch {
+      // File may have been deleted or is inaccessible - skip it
       continue;
     }
 
@@ -283,6 +284,7 @@ export function copyGitignoredFiles(srcDir: string, destDir: string): void {
         continue;
       }
     } catch {
+      // File may have been deleted or is inaccessible - skip it
       continue;
     }
 
@@ -296,7 +298,7 @@ export function copyGitignoredFiles(srcDir: string, destDir: string): void {
       try {
         cpSync(srcPath, destPath);
       } catch {
-        // Silently ignore copy errors
+        // Silently ignore copy errors (file may be locked or have permission issues)
       }
     }
   }
@@ -327,19 +329,6 @@ export function listProjectWorktrees(projectPath: string): WorktreeInfo[] {
 
   const allWorktrees = listWorktrees(projectPath);
   return allWorktrees.filter((wt) => wt.path.startsWith(projectWorktreeDir));
-}
-
-/**
- * Clean up orphaned worktrees (where the task no longer exists)
- */
-export function pruneWorktrees(projectPath: string): { pruned: string[] } {
-  const result = spawnSync("git", ["worktree", "prune"], {
-    cwd: projectPath,
-    encoding: "utf-8",
-  });
-
-  // This command doesn't output what was pruned, just return empty
-  return { pruned: [] };
 }
 
 /**
