@@ -264,6 +264,11 @@ Start with a # heading. Output ONLY the plan markdown, no other text.`;
 
   const output = result.stdout?.toString() ?? "";
 
+  if (!output.trim()) {
+    console.error(`${RED}✗${RESET} Claude produced no output`);
+    process.exit(1);
+  }
+
   // Save plan to file
   const plansDir = join(homedir(), ".claude", "plans");
   if (!existsSync(plansDir)) {

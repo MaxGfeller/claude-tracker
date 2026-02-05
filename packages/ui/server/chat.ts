@@ -1,8 +1,11 @@
 import { spawn } from "child_process";
-import { existsSync, readFileSync, writeFileSync } from "fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import { updatePlanningSessionId, updatePlanPath, type Plan } from "@tracker/cli/src/db";
 import { join } from "path";
 import { homedir } from "os";
+
+// Track the current plan path for newly created plans (since the Plan object is immutable)
+let lastSavedPlanPath: string | null = null;
 
 export function handlePlanChat(plan: Plan, message: string): Response {
   // Create or reuse planning session ID
@@ -112,11 +115,11 @@ When you create or update the plan, output the FULL plan wrapped in <plan> tags 
           const planMatch = fullOutput.match(/<plan>([\s\S]*?)<\/plan>/);
           if (planMatch) {
             const planContent = planMatch[1].trim();
-            savePlan(plan, planContent);
+            const savedPath = savePlan(plan, planContent);
 
             // Notify client that plan was updated
             if (controller) {
-              const event = `data: ${JSON.stringify({ type: "plan_updated", path: plan.plan_path })}\n\n`;
+              const event = `data: ${JSON.stringify({ type: "plan_updated", path: savedPath })}\n\n`;
               controller.enqueue(encoder.encode(event));
             }
           }
@@ -157,9 +160,9 @@ When you create or update the plan, output the FULL plan wrapped in <plan> tags 
       const planMatch = fullOutput.match(/<plan>([\s\S]*?)<\/plan>/);
       if (planMatch) {
         const planContent = planMatch[1].trim();
-        savePlan(plan, planContent);
+        const savedPath = savePlan(plan, planContent);
 
-        const event = `data: ${JSON.stringify({ type: "plan_updated", path: plan.plan_path })}\n\n`;
+        const event = `data: ${JSON.stringify({ type: "plan_updated", path: savedPath })}\n\n`;
         controller.enqueue(encoder.encode(event));
       }
 
@@ -178,13 +181,11 @@ When you create or update the plan, output the FULL plan wrapped in <plan> tags 
   });
 }
 
-function savePlan(plan: Plan, content: string): void {
-  let planPath = plan.plan_path;
+function savePlan(plan: Plan, content: string): string {
+  let planPath = plan.plan_path || lastSavedPlanPath;
 
   // Create new plan file if none exists
   if (!planPath) {
-    const { mkdirSync } = require("fs");
-
     const plansDir = join(homedir(), ".claude", "plans");
     if (!existsSync(plansDir)) {
       mkdirSync(plansDir, { recursive: true });
@@ -200,7 +201,9 @@ function savePlan(plan: Plan, content: string): void {
     planPath = join(plansDir, planFileName);
 
     updatePlanPath(plan.id, planPath);
+    lastSavedPlanPath = planPath;
   }
 
   writeFileSync(planPath, content);
+  return planPath;
 }

@@ -6,6 +6,7 @@ export interface Plan {
   project_name: string | null;
   status: string;
   branch: string | null;
+  session_id: string | null;
   planning_session_id: string | null;
   created_at: string;
   updated_at: string;

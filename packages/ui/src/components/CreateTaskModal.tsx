@@ -20,6 +20,8 @@ export function CreateTaskModal({ open, onClose, onCreated }: CreateTaskModalPro
   const { plans } = usePlans();
   const [title, setTitle] = useState("");
   const [projectPath, setProjectPath] = useState("");
+  const [customPath, setCustomPath] = useState("");
+  const [isCustomMode, setIsCustomMode] = useState(false);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -35,16 +37,19 @@ export function CreateTaskModal({ open, onClose, onCreated }: CreateTaskModalPro
       return;
     }
 
-    if (!projectPath.trim()) {
+    const finalPath = isCustomMode ? customPath : projectPath;
+    if (!finalPath.trim()) {
       setError("Project path is required");
       return;
     }
 
     setCreating(true);
     try {
-      const plan = await createTask(title.trim(), projectPath.trim());
+      const plan = await createTask(title.trim(), finalPath.trim());
       setTitle("");
       setProjectPath("");
+      setCustomPath("");
+      setIsCustomMode(false);
       onCreated(plan);
       onClose();
     } catch (e: any) {
@@ -57,8 +62,20 @@ export function CreateTaskModal({ open, onClose, onCreated }: CreateTaskModalPro
   const handleClose = () => {
     setTitle("");
     setProjectPath("");
+    setCustomPath("");
+    setIsCustomMode(false);
     setError(null);
     onClose();
+  };
+
+  const handleProjectChange = (value: string) => {
+    if (value === "__custom__") {
+      setIsCustomMode(true);
+      setProjectPath("");
+    } else {
+      setIsCustomMode(false);
+      setProjectPath(value);
+    }
   };
 
   return (
@@ -87,11 +104,11 @@ export function CreateTaskModal({ open, onClose, onCreated }: CreateTaskModalPro
               <label htmlFor="project" className="text-sm font-medium">
                 Project Path
               </label>
-              {existingProjects.length > 0 ? (
+              {existingProjects.length > 0 && !isCustomMode ? (
                 <select
                   id="project"
                   value={projectPath}
-                  onChange={(e) => setProjectPath(e.target.value)}
+                  onChange={(e) => handleProjectChange(e.target.value)}
                   className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                 >
                   <option value="">Select a project...</option>
@@ -106,21 +123,21 @@ export function CreateTaskModal({ open, onClose, onCreated }: CreateTaskModalPro
                 <input
                   id="project"
                   type="text"
-                  value={projectPath}
-                  onChange={(e) => setProjectPath(e.target.value)}
+                  value={isCustomMode ? customPath : projectPath}
+                  onChange={(e) => isCustomMode ? setCustomPath(e.target.value) : setProjectPath(e.target.value)}
                   placeholder="/path/to/project"
                   className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  autoFocus={isCustomMode}
                 />
               )}
-              {projectPath === "__custom__" && (
-                <input
-                  type="text"
-                  value=""
-                  onChange={(e) => setProjectPath(e.target.value)}
-                  placeholder="/path/to/project"
-                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                  autoFocus
-                />
+              {isCustomMode && existingProjects.length > 0 && (
+                <button
+                  type="button"
+                  className="text-xs text-muted-foreground hover:text-foreground"
+                  onClick={() => setIsCustomMode(false)}
+                >
+                  Back to project list
+                </button>
               )}
             </div>
             {error && <p className="text-sm text-red-500">{error}</p>}
