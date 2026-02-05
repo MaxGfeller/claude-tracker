@@ -100,46 +100,11 @@ export function PlanCard({ plan, onRefresh }: PlanCardProps) {
   return (
     <>
       <Card>
-        <CardContent className="flex flex-col gap-2 py-3 px-3">
+        <CardContent className="flex flex-col gap-2 px-3">
           <div className="flex items-center gap-2">
             <span className="text-muted-foreground text-xs font-mono">#{plan.id}</span>
             <span className="text-xs text-muted-foreground truncate">{projectName}</span>
-          </div>
-          <span className="font-medium text-sm leading-snug">{title}</span>
-          {plan.branch && (
-            <span className="text-xs text-muted-foreground font-mono truncate">
-              {plan.branch}
-            </span>
-          )}
-          {plan.worktree_path && (
-            <div className="flex items-center gap-1 text-xs text-muted-foreground font-mono truncate">
-              <span title={plan.worktree_path} className="truncate">
-                {formatWorktreePath(plan.worktree_path)}
-              </span>
-              <button
-                onClick={() => navigator.clipboard.writeText(plan.worktree_path!)}
-                className="p-0.5 hover:text-foreground transition-colors"
-                title="Copy path"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <rect width="14" height="14" x="8" y="8" rx="2" ry="2"/>
-                  <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
-                </svg>
-              </button>
-            </div>
-          )}
-          <div className="flex flex-wrap items-center gap-2 mt-1">
-            {/* Primary actions as buttons */}
-            {!hasPlan && isOpen && (
-              <Button size="sm" className="h-7 text-xs" onClick={handleGeneratePlan} disabled={generating}>
-                {generating ? "Generating..." : "Generate Plan"}
-              </Button>
-            )}
-            {canStart && (
-              <Button size="sm" className="h-7 text-xs" onClick={handleStartWork} disabled={starting}>
-                {starting ? "Starting..." : "Start Work"}
-              </Button>
-            )}
+            <div className="grow"></div>
             {/* Secondary actions in dropdown */}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -182,6 +147,42 @@ export function PlanCard({ plan, onRefresh }: PlanCardProps) {
                 )}
               </DropdownMenuContent>
             </DropdownMenu>
+          </div>
+          <span className="font-medium text-sm leading-snug">{title}</span>
+          {plan.branch && (
+            <span className="text-xs text-muted-foreground font-mono truncate">
+              {plan.branch}
+            </span>
+          )}
+          {plan.worktree_path && (
+            <div className="flex items-center gap-1 text-xs text-muted-foreground font-mono truncate">
+              <span title={plan.worktree_path} className="truncate">
+                {formatWorktreePath(plan.worktree_path)}
+              </span>
+              <button
+                onClick={() => navigator.clipboard.writeText(plan.worktree_path!)}
+                className="p-0.5 hover:text-foreground transition-colors"
+                title="Copy path"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect width="14" height="14" x="8" y="8" rx="2" ry="2"/>
+                  <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
+                </svg>
+              </button>
+            </div>
+          )}
+          <div className="flex flex-wrap items-center gap-2 mt-1">
+            {/* Primary actions as buttons */}
+            {!hasPlan && isOpen && (
+              <Button size="sm" className="h-7 text-xs" onClick={handleGeneratePlan} disabled={generating}>
+                {generating ? "Generating..." : "Generate Plan"}
+              </Button>
+            )}
+            {canStart && (
+              <Button size="sm" className="h-7 text-xs" onClick={handleStartWork} disabled={starting}>
+                {starting ? "Starting..." : "Start Work"}
+              </Button>
+            )}
           </div>
         </CardContent>
       </Card>
