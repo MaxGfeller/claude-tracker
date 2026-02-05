@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { addPlan, listPlans, updateStatus, getPlan, deletePlan, type Plan } from "./db";
+import { addPlan, listPlans, updateStatus, getPlan, deletePlan, createTask, updatePlanPath, updatePlanningSessionId, type Plan } from "./db";
 import { parsePlanTitle } from "./plans";
 import { startWork, startWorkMultiple } from "./work";
 import { selectPlans } from "./select";
@@ -9,9 +9,10 @@ import { initOTelCollector, shutdownOTelCollector, getClaudeOTelEnv } from "./ot
 import { checkUsageBeforeWork } from "./usage-check";
 import { UsageTracker } from "./usage-tracker";
 import { buildUsageLimits } from "./usage-check";
-import { existsSync } from "fs";
-import { resolve, dirname } from "path";
+import { existsSync, mkdirSync, writeFileSync } from "fs";
+import { resolve, dirname, join } from "path";
 import { spawnSync } from "child_process";
+import { homedir } from "os";
 import { confirm } from "@inquirer/prompts";
 
 const RESET = "\x1b[0m";
@@ -58,13 +59,34 @@ function formatDate(dateStr: string): string {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
+function findGitRoot(startPath: string): string | null {
+  let current = resolve(startPath);
+  while (current !== "/") {
+    if (existsSync(join(current, ".git"))) {
+      return current;
+    }
+    current = dirname(current);
+  }
+  return null;
+}
+
+function slugify(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 50);
+}
+
 function printUsage() {
   console.log(`${BOLD}tracker${RESET} — Track Claude Code plans across projects
 
 ${BOLD}Usage:${RESET}
+  tracker create [--project <path>] <title>  Create a new task (infers project from git root)
   tracker add <plan-path> <project-dir>   Register a plan
   tracker list                            List all plans grouped by project
   tracker status <id> <status>            Update plan status (open|in-progress|completed|in-review)
+  tracker plan <id>                       Generate a plan for a task using Claude
   tracker work [id...]                    Start Claude Code on plans (interactive if no IDs)
   tracker usage                           Show current usage and quota status
   tracker checkout <id>                   Checkout plan branch and resume Claude Code conversation
@@ -88,6 +110,9 @@ ${BOLD}Config keys:${RESET}
   usageLimits.organizationTier           (number)   Claude tier 1-4 (default: auto-detect)
 
 ${BOLD}Examples:${RESET}
+  tracker create "Add user authentication"
+  tracker create --project /path/to/repo "Add auth"
+  tracker plan 5
   tracker add ~/.claude/plans/my-plan.md /path/to/project
   tracker list
   tracker status 1 in-progress
@@ -129,6 +154,132 @@ function cmdAdd(args: string[]) {
   console.log(`  Title:   ${plan.plan_title ?? DIM + "(no title)" + RESET}`);
   console.log(`  Project: ${plan.project_name}`);
   console.log(`  Path:    ${plan.plan_path}`);
+}
+
+function cmdCreate(args: string[]) {
+  let projectPath: string | null = null;
+  let title: string | null = null;
+
+  // Parse args: --project <path> or just <title>
+  let i = 0;
+  while (i < args.length) {
+    if (args[i] === "--project" || args[i] === "-p") {
+      projectPath = args[i + 1];
+      i += 2;
+    } else {
+      // Remaining args are the title
+      title = args.slice(i).join(" ");
+      break;
+    }
+  }
+
+  if (!title) {
+    console.error(`${RED}Error: create requires a <title>${RESET}`);
+    process.exit(1);
+  }
+
+  // If no project path, infer from git root
+  if (!projectPath) {
+    projectPath = findGitRoot(process.cwd());
+    if (!projectPath) {
+      console.error(`${RED}Error: Not in a git repository. Use --project to specify the project path.${RESET}`);
+      process.exit(1);
+    }
+  }
+
+  const resolvedProject = resolve(projectPath);
+  if (!existsSync(resolvedProject)) {
+    console.error(`${RED}Error: Project directory not found: ${resolvedProject}${RESET}`);
+    process.exit(1);
+  }
+
+  const plan = createTask(resolvedProject, title);
+
+  console.log(`${GREEN}✓${RESET} Created task ${BOLD}#${plan.id}${RESET}`);
+  console.log(`  Title:   ${plan.plan_title}`);
+  console.log(`  Project: ${plan.project_name}`);
+  console.log(`  ${DIM}Use "tracker plan ${plan.id}" to generate a plan${RESET}`);
+}
+
+function cmdPlan(args: string[]) {
+  const idStr = args[0];
+  if (!idStr) {
+    console.error(`${RED}Error: plan requires a task <id>${RESET}`);
+    process.exit(1);
+  }
+
+  const id = parseInt(idStr, 10);
+  if (isNaN(id)) {
+    console.error(`${RED}Error: Invalid id "${idStr}"${RESET}`);
+    process.exit(1);
+  }
+
+  const plan = getPlan(id);
+  if (!plan) {
+    console.error(`${RED}Error: Task #${id} not found${RESET}`);
+    process.exit(1);
+  }
+
+  if (!plan.plan_title) {
+    console.error(`${RED}Error: Task #${id} has no title${RESET}`);
+    process.exit(1);
+  }
+
+  console.log(`${BOLD}▶${RESET} Generating plan for task ${BOLD}#${plan.id}${RESET}: ${plan.plan_title}`);
+  console.log(`  ${DIM}Project: ${plan.project_path}${RESET}\n`);
+
+  // Create or reuse planning session ID
+  let sessionId = plan.planning_session_id;
+  if (!sessionId) {
+    sessionId = `planning-${plan.id}-${Date.now()}`;
+    updatePlanningSessionId(plan.id, sessionId);
+  }
+
+  // Build the prompt
+  const prompt = `Create a detailed implementation plan for:
+Task: ${plan.plan_title}
+Project: ${plan.project_path}
+
+Include:
+1. Overview
+2. Step-by-step approach
+3. Files to modify/create
+4. Testing strategy
+5. Potential challenges
+
+Start with a # heading. Output ONLY the plan markdown, no other text.`;
+
+  // Spawn Claude with -p flag (print mode) and --session-id
+  const claudeArgs = ["-p", prompt, "--session-id", sessionId];
+  const result = spawnSync("claude", claudeArgs, {
+    cwd: plan.project_path,
+    stdio: ["inherit", "pipe", "inherit"],
+    encoding: "utf-8",
+  });
+
+  if (result.status !== 0) {
+    console.error(`${RED}✗${RESET} Claude exited with code ${result.status}`);
+    process.exit(1);
+  }
+
+  const output = result.stdout?.toString() ?? "";
+
+  // Save plan to file
+  const plansDir = join(homedir(), ".claude", "plans");
+  if (!existsSync(plansDir)) {
+    mkdirSync(plansDir, { recursive: true });
+  }
+
+  const slug = slugify(plan.plan_title);
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  const planFileName = `${slug}-${timestamp}.md`;
+  const planPath = join(plansDir, planFileName);
+
+  writeFileSync(planPath, output);
+  updatePlanPath(plan.id, planPath);
+
+  console.log(`\n${GREEN}✓${RESET} Plan saved to ${CYAN}${planPath}${RESET}`);
+  console.log(`  ${DIM}Use "tracker work ${plan.id}" to start working on the plan${RESET}`);
 }
 
 function cmdList() {
@@ -324,7 +475,7 @@ function cmdCheckout(args: string[]) {
     stdio: "inherit",
   });
 
-  process.exit(claude.exitCode ?? 0);
+  process.exit(claude.status ?? 0);
 }
 
 function git(args: string[], cwd: string): { ok: boolean; stdout: string; stderr: string } {
@@ -737,7 +888,7 @@ function cmdUi(args: string[]) {
       cwd: uiPkg,
       stdio: "inherit",
     });
-    if (build.exitCode !== 0) {
+    if (build.status !== 0) {
       console.error(`${RED}Error: Frontend build failed${RESET}`);
       process.exit(1);
     }
@@ -754,13 +905,16 @@ function cmdUi(args: string[]) {
     env: { ...process.env, PORT: port },
     stdio: "inherit",
   });
-  process.exit(server.exitCode ?? 0);
+  process.exit(server.status ?? 0);
 }
 
 // Main
 const [command, ...args] = process.argv.slice(2);
 
 switch (command) {
+  case "create":
+    cmdCreate(args);
+    break;
   case "add":
     cmdAdd(args);
     break;
@@ -769,6 +923,9 @@ switch (command) {
     break;
   case "status":
     cmdStatus(args);
+    break;
+  case "plan":
+    cmdPlan(args);
     break;
   case "work":
     await cmdWork(args);

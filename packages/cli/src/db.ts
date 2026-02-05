@@ -40,6 +40,9 @@ export function getDb(): Database {
   if (!cols.some((c) => c.name === "session_id")) {
     _db.run("ALTER TABLE plans ADD COLUMN session_id TEXT");
   }
+  if (!cols.some((c) => c.name === "planning_session_id")) {
+    _db.run("ALTER TABLE plans ADD COLUMN planning_session_id TEXT");
+  }
 
   return _db;
 }
@@ -53,6 +56,7 @@ export interface Plan {
   status: string;
   branch: string | null;
   session_id: string | null;
+  planning_session_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -124,4 +128,43 @@ export function getPlansByProject(projectPath: string): Plan[] {
   return db
     .prepare("SELECT * FROM plans WHERE project_path = ? ORDER BY created_at DESC")
     .all(projectPath) as Plan[];
+}
+
+export function createTask(
+  projectPath: string,
+  title: string,
+  projectName?: string
+): Plan {
+  const db = getDb();
+  const name = projectName ?? projectPath.split("/").pop() ?? projectPath;
+
+  const stmt = db.prepare(`
+    INSERT INTO plans (plan_path, plan_title, project_path, project_name)
+    VALUES (?, ?, ?, ?)
+  `);
+  stmt.run("", title, projectPath, name);
+
+  const last = db.prepare("SELECT last_insert_rowid() as id").get() as { id: number };
+  return db.prepare("SELECT * FROM plans WHERE id = ?").get(last.id) as Plan;
+}
+
+export function updatePlanPath(id: number, planPath: string): void {
+  const db = getDb();
+  db.prepare(`
+    UPDATE plans SET plan_path = ?, updated_at = datetime('now') WHERE id = ?
+  `).run(planPath, id);
+}
+
+export function updatePlanningSessionId(id: number, sessionId: string): void {
+  const db = getDb();
+  db.prepare(`
+    UPDATE plans SET planning_session_id = ?, updated_at = datetime('now') WHERE id = ?
+  `).run(sessionId, id);
+}
+
+export function updatePlanTitle(id: number, title: string): void {
+  const db = getDb();
+  db.prepare(`
+    UPDATE plans SET plan_title = ?, updated_at = datetime('now') WHERE id = ?
+  `).run(title, id);
 }

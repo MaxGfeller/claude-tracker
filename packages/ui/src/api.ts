@@ -6,6 +6,7 @@ export interface Plan {
   project_name: string | null;
   status: string;
   branch: string | null;
+  planning_session_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -34,4 +35,38 @@ export async function startAllWork(): Promise<{ ok: boolean; started: number[]; 
 
 export function planLogsURL(id: number): string {
   return `/api/plans/${id}/logs`;
+}
+
+export async function createTask(
+  title: string,
+  projectPath: string,
+  projectName?: string
+): Promise<Plan> {
+  const res = await fetch("/api/plans", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title, projectPath, projectName }),
+  });
+  if (!res.ok) {
+    const data = await res.json();
+    throw new Error(data.error || `Failed to create task: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function generatePlan(id: number): Promise<{ ok: boolean; message: string; planPath?: string }> {
+  const res = await fetch(`/api/plans/${id}/plan`, { method: "POST" });
+  return res.json();
+}
+
+export async function fetchPlanContent(id: number): Promise<string> {
+  const res = await fetch(`/api/plans/${id}/plan-content`);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch plan content: ${res.status}`);
+  }
+  return res.text();
+}
+
+export function planChatURL(id: number): string {
+  return `/api/plans/${id}/chat`;
 }

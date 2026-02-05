@@ -2,7 +2,9 @@ import { useState } from "react";
 import { Card, CardContent } from "./ui/card";
 import { Button } from "./ui/button";
 import { LogViewer } from "./LogViewer";
-import { startPlanWork, type Plan } from "../api";
+import { PlanViewer } from "./PlanViewer";
+import { PlanEditor } from "./PlanEditor";
+import { startPlanWork, generatePlan, type Plan } from "../api";
 
 interface PlanCardProps {
   plan: Plan;
@@ -11,7 +13,10 @@ interface PlanCardProps {
 
 export function PlanCard({ plan, onRefresh }: PlanCardProps) {
   const [logOpen, setLogOpen] = useState(false);
+  const [viewerOpen, setViewerOpen] = useState(false);
+  const [editorOpen, setEditorOpen] = useState(false);
   const [starting, setStarting] = useState(false);
+  const [generating, setGenerating] = useState(false);
 
   const handleStartWork = async () => {
     setStarting(true);
@@ -26,8 +31,25 @@ export function PlanCard({ plan, onRefresh }: PlanCardProps) {
     }
   };
 
-  const canStart = plan.status === "open";
+  const handleGeneratePlan = async () => {
+    setGenerating(true);
+    try {
+      const result = await generatePlan(plan.id);
+      if (result.ok) {
+        onRefresh();
+      } else {
+        console.error("Failed to generate plan:", result.message);
+      }
+    } catch (e) {
+      console.error("Failed to generate plan:", e);
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const canStart = plan.status === "open" && plan.plan_path;
   const canViewLogs = plan.status === "in-progress" || plan.status === "in-review";
+  const hasPlan = !!plan.plan_path;
   const title = plan.plan_title ?? "(untitled)";
   const projectName = plan.project_name ?? plan.project_path.split("/").pop() ?? plan.project_path;
 
@@ -45,7 +67,22 @@ export function PlanCard({ plan, onRefresh }: PlanCardProps) {
               {plan.branch}
             </span>
           )}
-          <div className="flex gap-2 mt-1">
+          <div className="flex flex-wrap gap-2 mt-1">
+            {hasPlan && (
+              <>
+                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setViewerOpen(true)}>
+                  View Plan
+                </Button>
+                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setEditorOpen(true)}>
+                  Edit
+                </Button>
+              </>
+            )}
+            {!hasPlan && plan.status === "open" && (
+              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={handleGeneratePlan} disabled={generating}>
+                {generating ? "Generating..." : "Generate Plan"}
+              </Button>
+            )}
             {canStart && (
               <Button size="sm" className="h-7 text-xs" onClick={handleStartWork} disabled={starting}>
                 {starting ? "Starting..." : "Start Work"}
@@ -64,6 +101,21 @@ export function PlanCard({ plan, onRefresh }: PlanCardProps) {
         planTitle={title}
         open={logOpen}
         onClose={() => setLogOpen(false)}
+      />
+      <PlanViewer
+        planId={plan.id}
+        planTitle={title}
+        open={viewerOpen}
+        onClose={() => setViewerOpen(false)}
+      />
+      <PlanEditor
+        planId={plan.id}
+        planTitle={title}
+        open={editorOpen}
+        onClose={() => {
+          setEditorOpen(false);
+          onRefresh();
+        }}
       />
     </>
   );

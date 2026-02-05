@@ -2,7 +2,9 @@ import { useMemo, useState } from "react";
 import { usePlans } from "../hooks/usePlans";
 import { KanbanColumn } from "./KanbanColumn";
 import { Button } from "./ui/button";
+import { CreateTaskModal } from "./CreateTaskModal";
 import { startAllWork, type Plan } from "../api";
+import { PlusIcon } from "lucide-react";
 
 const COLUMNS = [
   { title: "Open", status: "open" },
@@ -19,6 +21,7 @@ interface DashboardProps {
 export function Dashboard({ showCompleted, selectedProjects }: DashboardProps) {
   const { plans, loading, refresh } = usePlans();
   const [startingAll, setStartingAll] = useState(false);
+  const [createModalOpen, setCreateModalOpen] = useState(false);
 
   const handleStartAll = async () => {
     setStartingAll(true);
@@ -47,10 +50,19 @@ export function Dashboard({ showCompleted, selectedProjects }: DashboardProps) {
     return (
       <div className="text-center py-12 text-muted-foreground">
         <p className="text-lg">No plans tracked yet.</p>
-        <p className="text-sm mt-1">
+        <p className="text-sm mt-1 mb-4">
           Use <code className="font-mono bg-muted px-1 rounded">tracker add</code> to register a
-          plan.
+          plan, or create a new task below.
         </p>
+        <Button onClick={() => setCreateModalOpen(true)}>
+          <PlusIcon className="h-4 w-4 mr-2" />
+          New Task
+        </Button>
+        <CreateTaskModal
+          open={createModalOpen}
+          onClose={() => setCreateModalOpen(false)}
+          onCreated={refresh}
+        />
       </div>
     );
   }
@@ -69,13 +81,17 @@ export function Dashboard({ showCompleted, selectedProjects }: DashboardProps) {
 
   return (
     <div className="flex flex-col gap-3 h-full">
-      {openCount > 0 && (
-        <div className="flex items-center">
-          <Button size="sm" onClick={handleStartAll} disabled={startingAll}>
+      <div className="flex items-center gap-2">
+        <Button size="sm" onClick={() => setCreateModalOpen(true)}>
+          <PlusIcon className="h-4 w-4 mr-1" />
+          New Task
+        </Button>
+        {openCount > 0 && (
+          <Button size="sm" variant="outline" onClick={handleStartAll} disabled={startingAll}>
             {startingAll ? "Starting..." : `Start All (${openCount})`}
           </Button>
-        </div>
-      )}
+        )}
+      </div>
       <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 flex-1 overflow-y-auto sm:overflow-y-hidden sm:overflow-x-auto">
         {columns.map((col) => (
           <KanbanColumn
@@ -86,6 +102,11 @@ export function Dashboard({ showCompleted, selectedProjects }: DashboardProps) {
           />
         ))}
       </div>
+      <CreateTaskModal
+        open={createModalOpen}
+        onClose={() => setCreateModalOpen(false)}
+        onCreated={refresh}
+      />
     </div>
   );
 }

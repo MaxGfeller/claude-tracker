@@ -1,12 +1,13 @@
-import { existsSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { join, resolve } from "path";
-import { spawn } from "child_process";
+import { spawn, spawnSync } from "child_process";
 import { createInterface } from "readline";
 import { handleSSELogs } from "./sse";
+import { handlePlanChat } from "./chat";
 import { trackChild, removeChild, getActiveChildCount } from "./children";
 
 // Import DB functions from the CLI package via workspace
-import { listPlans, getPlan } from "@tracker/cli/src/db";
+import { listPlans, getPlan, createTask, updatePlanPath, updatePlanningSessionId } from "@tracker/cli/src/db";
 
 const PORT = parseInt(process.env.PORT ?? "3847", 10);
 const UI_DIR = resolve(import.meta.dir, "..");
@@ -110,6 +111,135 @@ async function handleRequest(req: Request): Promise<Response> {
     const plan = getPlan(id);
     if (!plan) return jsonResponse({ error: "Not found" }, 404);
     return handleSSELogs(id);
+  }
+
+  // POST /api/plans - Create a new task
+  if (pathname === "/api/plans" && method === "POST") {
+    try {
+      const body = await req.json() as { title: string; projectPath: string; projectName?: string };
+      const { title, projectPath, projectName } = body;
+
+      if (!title || !projectPath) {
+        return jsonResponse({ error: "title and projectPath are required" }, 400);
+      }
+
+      if (!existsSync(projectPath)) {
+        return jsonResponse({ error: `Project path not found: ${projectPath}` }, 400);
+      }
+
+      const plan = createTask(projectPath, title, projectName);
+      return jsonResponse(plan);
+    } catch (e: any) {
+      return jsonResponse({ error: e.message }, 400);
+    }
+  }
+
+  // POST /api/plans/:id/plan - Generate a plan via Claude
+  params = matchRoute(pathname, "/api/plans/:id/plan");
+  if (params && method === "POST") {
+    const id = parseInt(params.id, 10);
+    const plan = getPlan(id);
+    if (!plan) return jsonResponse({ error: "Not found" }, 404);
+
+    if (!plan.plan_title) {
+      return jsonResponse({ error: "Task has no title" }, 400);
+    }
+
+    // Create or reuse planning session ID
+    let sessionId = plan.planning_session_id;
+    if (!sessionId) {
+      sessionId = `planning-${plan.id}-${Date.now()}`;
+      updatePlanningSessionId(plan.id, sessionId);
+    }
+
+    // Build the prompt
+    const prompt = `Create a detailed implementation plan for:
+Task: ${plan.plan_title}
+Project: ${plan.project_path}
+
+Include:
+1. Overview
+2. Step-by-step approach
+3. Files to modify/create
+4. Testing strategy
+5. Potential challenges
+
+Start with a # heading. Output ONLY the plan markdown, no other text.`;
+
+    // Spawn Claude with -p flag (print mode) and --session-id
+    const claudeArgs = ["-p", prompt, "--session-id", sessionId];
+    const result = spawnSync("claude", claudeArgs, {
+      cwd: plan.project_path,
+      stdio: ["inherit", "pipe", "inherit"],
+      encoding: "utf-8",
+    });
+
+    if (result.status !== 0) {
+      return jsonResponse({ ok: false, message: `Claude exited with code ${result.status}` }, 500);
+    }
+
+    const output = result.stdout?.toString() ?? "";
+
+    // Save plan to file
+    const { homedir } = await import("os");
+    const { mkdirSync, writeFileSync } = await import("fs");
+
+    const plansDir = join(homedir(), ".claude", "plans");
+    if (!existsSync(plansDir)) {
+      mkdirSync(plansDir, { recursive: true });
+    }
+
+    const slug = plan.plan_title
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 50);
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    const planFileName = `${slug}-${timestamp}.md`;
+    const planPath = join(plansDir, planFileName);
+
+    writeFileSync(planPath, output);
+    updatePlanPath(plan.id, planPath);
+
+    return jsonResponse({ ok: true, message: "Plan generated", planPath });
+  }
+
+  // GET /api/plans/:id/plan-content - Get the plan markdown content
+  params = matchRoute(pathname, "/api/plans/:id/plan-content");
+  if (params && method === "GET") {
+    const id = parseInt(params.id, 10);
+    const plan = getPlan(id);
+    if (!plan) return jsonResponse({ error: "Not found" }, 404);
+
+    if (!plan.plan_path || !existsSync(plan.plan_path)) {
+      return jsonResponse({ error: "Plan file not found" }, 404);
+    }
+
+    const content = readFileSync(plan.plan_path, "utf-8");
+    return new Response(content, {
+      headers: { "Content-Type": "text/markdown" },
+    });
+  }
+
+  // POST /api/plans/:id/chat - Send a chat message for plan editing
+  params = matchRoute(pathname, "/api/plans/:id/chat");
+  if (params && method === "POST") {
+    const id = parseInt(params.id, 10);
+    const plan = getPlan(id);
+    if (!plan) return jsonResponse({ error: "Not found" }, 404);
+
+    try {
+      const body = await req.json() as { message: string };
+      const { message } = body;
+
+      if (!message) {
+        return jsonResponse({ error: "message is required" }, 400);
+      }
+
+      return handlePlanChat(plan, message);
+    } catch (e: any) {
+      return jsonResponse({ error: e.message }, 400);
+    }
   }
 
   // Static file serving (production)
