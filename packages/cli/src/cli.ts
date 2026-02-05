@@ -26,7 +26,7 @@ import { initOTelCollector, shutdownOTelCollector, getClaudeOTelEnv } from "./ot
 import { checkUsageBeforeWork } from "./usage-check";
 import { UsageTracker } from "./usage-tracker";
 import { buildUsageLimits } from "./usage-check";
-import { existsSync, mkdirSync, writeFileSync, readdirSync, rmSync } from "fs";
+import { existsSync, mkdirSync, writeFileSync, readdirSync, rmSync, readFileSync, appendFileSync } from "fs";
 import { resolve, dirname, join } from "path";
 import { spawnSync } from "child_process";
 import { homedir } from "os";
@@ -810,8 +810,7 @@ function cmdInstallShellFunction(args: string[]) {
     // Check if already installed
     let rcContent = "";
     try {
-      const { readFileSync: readFile } = require("fs");
-      rcContent = readFile(rcFile, "utf-8");
+      rcContent = readFileSync(rcFile, "utf-8");
     } catch {
       // File doesn't exist, that's fine
     }
@@ -821,7 +820,6 @@ function cmdInstallShellFunction(args: string[]) {
     } else {
       // Append to RC file
       const appendContent = `\n# Task Tracker shell function\n${sourceLine}\n`;
-      const { appendFileSync } = require("fs");
       appendFileSync(rcFile, appendContent);
       console.log(`${GREEN}✓${RESET} Added to ${CYAN}${rcFile}${RESET}`);
     }
