@@ -23,6 +23,8 @@ export interface TrackerConfig {
     organizationTier: 1 | 2 | 3 | 4 | null;
   };
   worktree?: WorktreeConfig;
+  shellFunctionInstalled?: boolean;
+  firstCheckoutDone?: boolean;
 }
 
 const DEFAULTS: TrackerConfig = {
@@ -49,6 +51,8 @@ export const CONFIG_KEYS: Record<keyof TrackerConfig, "boolean" | "number" | "ob
   maxReviewRounds: "number",
   usageLimits: "object",
   worktree: "object",
+  shellFunctionInstalled: "boolean",
+  firstCheckoutDone: "boolean",
 };
 
 export function loadConfig(): TrackerConfig {

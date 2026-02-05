@@ -51,6 +51,57 @@ const GREEN = "\x1b[32m";
 const RED = "\x1b[31m";
 const CYAN = "\x1b[36m";
 
+// Shell function templates for auto-cd on checkout
+const SHELL_FUNCTION_BASH = `# Task Tracker shell function - auto-cd on checkout
+tracker() {
+  local real_tracker
+  real_tracker=$(command which tracker 2>/dev/null || echo "tracker")
+
+  if [[ "$1" == "checkout" ]]; then
+    local output
+    output=$("$real_tracker" "$@")
+    local exit_code=$?
+    echo "$output"
+
+    if [[ $exit_code -eq 0 ]]; then
+      local worktree_path
+      worktree_path=$(echo "$output" | grep 'WORKTREE_PATH:' | sed 's/WORKTREE_PATH://')
+      if [[ -n "$worktree_path" && -d "$worktree_path" ]]; then
+        cd "$worktree_path" || true
+      fi
+    fi
+    return $exit_code
+  else
+    "$real_tracker" "$@"
+  fi
+}
+`;
+
+const SHELL_FUNCTION_ZSH = `# Task Tracker shell function - auto-cd on checkout
+tracker() {
+  local real_tracker
+  real_tracker=$(command which tracker 2>/dev/null || echo "tracker")
+
+  if [[ "$1" == "checkout" ]]; then
+    local output
+    output=$("$real_tracker" "$@")
+    local exit_code=$?
+    echo "$output"
+
+    if [[ $exit_code -eq 0 ]]; then
+      local worktree_path
+      worktree_path=$(echo "$output" | grep 'WORKTREE_PATH:' | sed 's/WORKTREE_PATH://')
+      if [[ -n "$worktree_path" && -d "$worktree_path" ]]; then
+        cd "$worktree_path" || true
+      fi
+    fi
+    return $exit_code
+  else
+    "$real_tracker" "$@"
+  fi
+}
+`;
+
 function statusColor(status: string): string {
   switch (status) {
     case "open":
@@ -120,7 +171,8 @@ ${BOLD}Usage:${RESET}
   tracker work [id...]                    Start Claude Code on plans (interactive if no IDs)
                                           Blocked tasks (with unmet dependencies) are skipped
   tracker usage                           Show current usage and quota status
-  tracker checkout <id>                   Checkout plan branch and resume Claude Code conversation
+  tracker checkout <id>                   Setup worktree/branch (doesn't launch Claude)
+  tracker resume <id>                     Resume Claude Code in plan's directory
   tracker complete [id]                   Merge plan branch into main and mark completed
   tracker complete [id] --db-only         Mark completed without git operations
   tracker reset <id>                      Reset plan to open, optionally deleting its branch
@@ -132,6 +184,7 @@ ${BOLD}Usage:${RESET}
   tracker config                          Show all config values
   tracker config <key>                    Get a config value
   tracker config <key> <value>            Set a config value
+  tracker install-shell-function          Install shell function for auto-cd on checkout
   tracker ui [port]                       Launch web dashboard (default port: 3847)
 
 ${BOLD}Config keys:${RESET}
@@ -158,7 +211,17 @@ ${BOLD}Examples:${RESET}
   tracker work
   tracker work 1 2
   tracker usage
-  tracker checkout 3
+
+  # Manual workflow:
+  tracker checkout 3          # Setup worktree/branch
+  cd ~/.task-tracker/...      # Navigate to worktree
+  tracker resume 3            # Resume Claude
+
+  # Auto workflow (one-time setup):
+  tracker install-shell-function --auto
+  source ~/.zshrc
+  tracker checkout 3          # Auto-navigates!
+
   tracker complete 3
   tracker reset 3
   tracker config usageLimits.enabled true
@@ -522,11 +585,7 @@ function cmdCheckout(args: string[]) {
 
   if (!plan.branch) {
     console.error(`${RED}Error: Plan #${id} has no branch — it may not have been worked on yet${RESET}`);
-    process.exit(1);
-  }
-
-  if (!plan.session_id) {
-    console.error(`${RED}Error: Plan #${id} has no session ID — it was started before session tracking was added${RESET}`);
+    console.error(`${DIM}Use "tracker work ${id}" to start working on this plan${RESET}`);
     process.exit(1);
   }
 
@@ -536,9 +595,11 @@ function cmdCheckout(args: string[]) {
   console.log(
     `${BOLD}▶${RESET} Checking out plan ${BOLD}#${plan.id}${RESET}: ${plan.plan_title ?? "(untitled)"}`
   );
-  console.log(`  ${DIM}Branch:  ${plan.branch}${RESET}`);
-  console.log(`  ${DIM}Session: ${plan.session_id}${RESET}`);
-  console.log(`  ${DIM}Project: ${plan.project_path}${RESET}`);
+  console.log(`  Branch:  ${CYAN}${plan.branch}${RESET}`);
+  if (plan.session_id) {
+    console.log(`  Session: ${DIM}${plan.session_id}${RESET}`);
+  }
+  console.log(`  Project: ${DIM}${plan.project_path}${RESET}`);
 
   let workingDir = plan.project_path;
 
@@ -557,7 +618,7 @@ function cmdCheckout(args: string[]) {
         if (plan.worktree_path !== expectedPath) {
           updateWorktreePath(plan.id, expectedPath);
         }
-        console.log(`  ${DIM}Worktree: ${formatWorktreePath(workingDir)}${RESET}`);
+        console.log(`  ${GREEN}✓${RESET} Using worktree at ${CYAN}${formatWorktreePath(workingDir)}${RESET}`);
       } else {
         // Worktree doesn't exist - create it (handles manually deleted worktrees)
         if (plan.worktree_path) {
@@ -596,17 +657,103 @@ function cmdCheckout(args: string[]) {
       process.exit(1);
     }
     console.log(`${GREEN}✓${RESET} On branch ${CYAN}${plan.branch}${RESET}`);
-  } else {
-    console.log(`${GREEN}✓${RESET} Using worktree at ${CYAN}${formatWorktreePath(workingDir)}${RESET}`);
   }
 
-  // If using worktree, print instructions to navigate
+  // Print next steps
+  console.log(`\n${BOLD}Next steps:${RESET}`);
   if (workingDir !== plan.project_path) {
-    console.log(`\n${BOLD}To navigate to the worktree:${RESET}`);
-    console.log(`  cd ${workingDir}\n`);
+    console.log(`  1. Navigate: ${CYAN}cd ${workingDir}${RESET}`);
+    console.log(`  2. Resume:   ${CYAN}tracker resume ${plan.id}${RESET}`);
+  } else {
+    console.log(`  Resume:   ${CYAN}tracker resume ${plan.id}${RESET}`);
   }
 
-  console.log(`${DIM}Resuming Claude Code conversation...${RESET}\n`);
+  // Show first-time tip if applicable
+  showFirstCheckoutMessage(config);
+
+  // Output machine-readable worktree path for shell function
+  if (workingDir !== plan.project_path) {
+    console.log(`\nWORKTREE_PATH:${workingDir}`);
+  }
+}
+
+function showFirstCheckoutMessage(config: TrackerConfig) {
+  // Skip if shell function already installed
+  if (config.shellFunctionInstalled) return;
+
+  // Skip if already shown (first checkout done)
+  if (config.firstCheckoutDone) return;
+
+  // Show tip
+  console.log(`\n${YELLOW}💡 Tip:${RESET} Enable automatic navigation with:`);
+  console.log(`   ${CYAN}tracker install-shell-function --auto${RESET}`);
+
+  // Mark as shown
+  config.firstCheckoutDone = true;
+  saveConfig(config);
+}
+
+function cmdResume(args: string[]) {
+  const idStr = args[0];
+  if (!idStr) {
+    console.error(`${RED}Error: resume requires a plan <id>${RESET}`);
+    process.exit(1);
+  }
+
+  const id = parseInt(idStr, 10);
+  if (isNaN(id)) {
+    console.error(`${RED}Error: Invalid id "${idStr}"${RESET}`);
+    process.exit(1);
+  }
+
+  const plan = getPlan(id);
+  if (!plan) {
+    console.error(`${RED}Error: Plan #${id} not found${RESET}`);
+    process.exit(1);
+  }
+
+  if (!plan.session_id) {
+    console.error(`${RED}Error: Plan #${id} has no session ID${RESET}`);
+    console.error(`${DIM}Use "tracker work ${id}" to start working on this plan${RESET}`);
+    process.exit(1);
+  }
+
+  const config = loadConfig();
+  const worktreeEnabled = config.worktree?.enabled ?? true;
+
+  // Determine the working directory
+  let workingDir = plan.project_path;
+
+  if (worktreeEnabled && plan.worktree_path) {
+    // Check if worktree still exists
+    if (worktreeExists(plan.project_path, plan.id)) {
+      workingDir = plan.worktree_path;
+    } else {
+      console.error(`${RED}Error: Worktree was deleted${RESET}`);
+      console.error(`${DIM}Use "tracker checkout ${id}" to recreate the worktree${RESET}`);
+      process.exit(1);
+    }
+  } else if (!worktreeEnabled && plan.branch) {
+    // If worktrees are disabled, check if we're on the correct branch
+    const result = Bun.spawnSync(["git", "rev-parse", "--abbrev-ref", "HEAD"], {
+      cwd: plan.project_path,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const currentBranch = result.stdout.toString().trim();
+    if (currentBranch !== plan.branch) {
+      console.error(`${YELLOW}⚠${RESET} Not on plan branch ${CYAN}${plan.branch}${RESET} (on ${CYAN}${currentBranch}${RESET})`);
+      console.error(`${DIM}Use "tracker checkout ${id}" to checkout the branch first${RESET}`);
+      process.exit(1);
+    }
+  }
+
+  console.log(
+    `${BOLD}▶${RESET} Resuming plan ${BOLD}#${plan.id}${RESET}: ${plan.plan_title ?? "(untitled)"}`
+  );
+  console.log(`  ${DIM}Session: ${plan.session_id}${RESET}`);
+  console.log(`  ${DIM}Working dir: ${workingDir}${RESET}`);
+  console.log();
 
   // Resume Claude Code conversation by session ID
   const claudeArgs = ["--resume", plan.session_id];
@@ -619,6 +766,82 @@ function cmdCheckout(args: string[]) {
   });
 
   process.exit(claude.status ?? 0);
+}
+
+function cmdInstallShellFunction(args: string[]) {
+  const autoMode = args.includes("--auto");
+  const forceBash = args.includes("--bash");
+  const forceZsh = args.includes("--zsh");
+
+  // Determine shell type
+  let shellType: "bash" | "zsh";
+  const currentShell = process.env.SHELL ?? "";
+
+  if (forceBash) {
+    shellType = "bash";
+  } else if (forceZsh) {
+    shellType = "zsh";
+  } else if (currentShell.endsWith("/zsh")) {
+    shellType = "zsh";
+  } else if (currentShell.endsWith("/bash")) {
+    shellType = "bash";
+  } else {
+    console.error(`${RED}Error: Could not detect shell type from $SHELL (${currentShell})${RESET}`);
+    console.error(`${DIM}Use --bash or --zsh to specify the shell type${RESET}`);
+    process.exit(1);
+  }
+
+  const functionContent = shellType === "zsh" ? SHELL_FUNCTION_ZSH : SHELL_FUNCTION_BASH;
+  const functionExt = shellType === "zsh" ? "zsh" : "sh";
+  const rcFile = shellType === "zsh" ? join(homedir(), ".zshrc") : join(homedir(), ".bashrc");
+
+  // Save function to file
+  const functionDir = join(homedir(), ".local", "share", "task-tracker");
+  const functionPath = join(functionDir, `shell-function.${functionExt}`);
+
+  mkdirSync(functionDir, { recursive: true });
+  writeFileSync(functionPath, functionContent);
+
+  console.log(`${GREEN}✓${RESET} Shell function written to ${CYAN}${functionPath}${RESET}`);
+
+  const sourceLine = `source "${functionPath}"`;
+
+  if (autoMode) {
+    // Check if already installed
+    let rcContent = "";
+    try {
+      const { readFileSync: readFile } = require("fs");
+      rcContent = readFile(rcFile, "utf-8");
+    } catch {
+      // File doesn't exist, that's fine
+    }
+
+    if (rcContent.includes(functionPath)) {
+      console.log(`${DIM}Already installed in ${rcFile}${RESET}`);
+    } else {
+      // Append to RC file
+      const appendContent = `\n# Task Tracker shell function\n${sourceLine}\n`;
+      const { appendFileSync } = require("fs");
+      appendFileSync(rcFile, appendContent);
+      console.log(`${GREEN}✓${RESET} Added to ${CYAN}${rcFile}${RESET}`);
+    }
+
+    // Update config
+    const config = loadConfig();
+    config.shellFunctionInstalled = true;
+    saveConfig(config);
+
+    console.log(`\n${BOLD}Activate now:${RESET}`);
+    console.log(`  ${CYAN}source ${rcFile}${RESET}`);
+    console.log(`\n${DIM}Or restart your terminal${RESET}`);
+  } else {
+    // Manual mode - print instructions
+    console.log(`\n${BOLD}Add this line to your ${rcFile}:${RESET}`);
+    console.log(`  ${CYAN}${sourceLine}${RESET}`);
+    console.log(`\n${BOLD}Then activate:${RESET}`);
+    console.log(`  ${CYAN}source ${rcFile}${RESET}`);
+    console.log(`\n${DIM}Or use --auto to install automatically${RESET}`);
+  }
 }
 
 function git(args: string[], cwd: string): { ok: boolean; stdout: string; stderr: string } {
@@ -1353,6 +1576,12 @@ switch (command) {
     break;
   case "checkout":
     cmdCheckout(args);
+    break;
+  case "resume":
+    cmdResume(args);
+    break;
+  case "install-shell-function":
+    cmdInstallShellFunction(args);
     break;
   case "complete":
     await cmdComplete(args);
