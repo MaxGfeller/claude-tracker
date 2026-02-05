@@ -7,7 +7,7 @@ import { handlePlanChat } from "./chat";
 import { trackChild, removeChild, getActiveChildCount } from "./children";
 
 // Import DB functions from the CLI package via workspace
-import { listPlans, getPlan, createTask, updatePlanPath } from "@tracker/cli/src/db";
+import { listPlans, getPlan, createTask, updatePlanPath, deletePlan } from "@tracker/cli/src/db";
 
 const PORT = parseInt(process.env.PORT ?? "3847", 10);
 const UI_DIR = resolve(import.meta.dir, "..");
@@ -53,6 +53,22 @@ async function handleRequest(req: Request): Promise<Response> {
     const plan = getPlan(parseInt(params.id, 10));
     if (!plan) return jsonResponse({ error: "Not found" }, 404);
     return jsonResponse(plan);
+  }
+
+  // DELETE /api/plans/:id - Delete a task (only if not started)
+  params = matchRoute(pathname, "/api/plans/:id");
+  if (params && method === "DELETE") {
+    const id = parseInt(params.id, 10);
+    const plan = getPlan(id);
+    if (!plan) return jsonResponse({ error: "Not found" }, 404);
+
+    // Only allow deletion of open tasks (not started)
+    if (plan.status !== "open") {
+      return jsonResponse({ ok: false, message: `Cannot delete task with status "${plan.status}"` }, 400);
+    }
+
+    deletePlan(id);
+    return jsonResponse({ ok: true, message: `Task #${id} deleted` });
   }
 
   if (pathname === "/api/plans/work-all" && method === "POST") {

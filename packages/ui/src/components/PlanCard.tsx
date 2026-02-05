@@ -1,10 +1,16 @@
 import { useState } from "react";
 import { Card, CardContent } from "./ui/card";
 import { Button } from "./ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "./ui/dropdown-menu";
 import { LogViewer } from "./LogViewer";
 import { PlanViewer } from "./PlanViewer";
 import { PlanEditor } from "./PlanEditor";
-import { startPlanWork, generatePlan, type Plan } from "../api";
+import { startPlanWork, generatePlan, deleteTask, type Plan } from "../api";
 
 interface PlanCardProps {
   plan: Plan;
@@ -17,6 +23,7 @@ export function PlanCard({ plan, onRefresh }: PlanCardProps) {
   const [editorOpen, setEditorOpen] = useState(false);
   const [starting, setStarting] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const handleStartWork = async () => {
     setStarting(true);
@@ -44,6 +51,23 @@ export function PlanCard({ plan, onRefresh }: PlanCardProps) {
       console.error("Failed to generate plan:", e);
     } finally {
       setGenerating(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!confirm(`Delete task "${plan.plan_title}"?`)) return;
+    setDeleting(true);
+    try {
+      const result = await deleteTask(plan.id);
+      if (result.ok) {
+        onRefresh();
+      } else {
+        console.error("Failed to delete task:", result.message);
+      }
+    } catch (e) {
+      console.error("Failed to delete task:", e);
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -94,6 +118,29 @@ export function PlanCard({ plan, onRefresh }: PlanCardProps) {
               <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setLogOpen(true)}>
                 View Logs
               </Button>
+            )}
+            {isOpen && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-xs">
+                    <span className="sr-only">More options</span>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <circle cx="12" cy="12" r="1" />
+                      <circle cx="12" cy="5" r="1" />
+                      <circle cx="12" cy="19" r="1" />
+                    </svg>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem
+                    className="text-destructive focus:text-destructive"
+                    onClick={handleDelete}
+                    disabled={deleting}
+                  >
+                    {deleting ? "Deleting..." : "Delete Task"}
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             )}
           </div>
         </CardContent>

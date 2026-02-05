@@ -73,3 +73,8 @@ export async function fetchPlanContent(id: number): Promise<string> {
 export function planChatURL(id: number): string {
   return `/api/plans/${id}/chat`;
 }
+
+export async function deleteTask(id: number): Promise<{ ok: boolean; message: string }> {
+  const res = await fetch(`/api/plans/${id}`, { method: "DELETE" });
+  return res.json();
+}
