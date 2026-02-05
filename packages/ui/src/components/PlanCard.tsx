@@ -185,7 +185,7 @@ export function PlanCard({ plan, allPlans, onRefresh }: PlanCardProps) {
           )}
           {isBlocked && blockedByTask && (
             <div className="text-xs text-yellow-600 dark:text-yellow-400">
-              Waiting for #{blockedByTask.id} to reach in-review
+              Waiting for #{blockedByTask.id}
             </div>
           )}
           {plan.branch && (
