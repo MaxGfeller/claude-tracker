@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { addPlan, listPlans, updateStatus, getPlan, deletePlan, createTask, updatePlanPath, updatePlanningSessionId, type Plan } from "./db";
+import { addPlan, listPlans, updateStatus, getPlan, deletePlan, createTask, updatePlanPath, type Plan } from "./db";
 import { parsePlanTitle } from "./plans";
 import { startWork, startWorkMultiple } from "./work";
 import { selectPlans } from "./select";
@@ -238,17 +238,15 @@ function cmdPlan(args: string[]) {
   console.log(`${BOLD}▶${RESET} Generating plan for task ${BOLD}#${plan.id}${RESET}: ${plan.plan_title}`);
   console.log(`  ${DIM}Project: ${plan.project_path}${RESET}\n`);
 
-  // Create or reuse planning session ID (must be valid UUID)
-  let sessionId = plan.planning_session_id;
-  if (!sessionId) {
-    sessionId = crypto.randomUUID();
-    updatePlanningSessionId(plan.id, sessionId);
+  // Build the prompt including description if available
+  let taskDetails = `Task: ${plan.plan_title}`;
+  if (plan.description) {
+    taskDetails += `\nDescription: ${plan.description}`;
   }
+  taskDetails += `\nProject: ${plan.project_path}`;
 
-  // Build the prompt
   const prompt = `Create a detailed implementation plan for:
-Task: ${plan.plan_title}
-Project: ${plan.project_path}
+${taskDetails}
 
 Include:
 1. Overview
@@ -259,8 +257,8 @@ Include:
 
 Start with a # heading. Output ONLY the plan markdown, no other text.`;
 
-  // Spawn Claude with -p flag (print mode) and --session-id
-  const claudeArgs = ["-p", prompt, "--session-id", sessionId];
+  // Spawn Claude with -p flag (print mode) - no session ID needed for one-shot generation
+  const claudeArgs = ["-p", prompt];
   const result = spawnSync("claude", claudeArgs, {
     cwd: plan.project_path,
     stdio: ["inherit", "pipe", "inherit"],

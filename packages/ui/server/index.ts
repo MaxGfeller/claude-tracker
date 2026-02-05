@@ -7,7 +7,7 @@ import { handlePlanChat } from "./chat";
 import { trackChild, removeChild, getActiveChildCount } from "./children";
 
 // Import DB functions from the CLI package via workspace
-import { listPlans, getPlan, createTask, updatePlanPath, updatePlanningSessionId } from "@tracker/cli/src/db";
+import { listPlans, getPlan, createTask, updatePlanPath } from "@tracker/cli/src/db";
 
 const PORT = parseInt(process.env.PORT ?? "3847", 10);
 const UI_DIR = resolve(import.meta.dir, "..");
@@ -145,17 +145,15 @@ async function handleRequest(req: Request): Promise<Response> {
       return jsonResponse({ error: "Task has no title" }, 400);
     }
 
-    // Create or reuse planning session ID (must be valid UUID)
-    let sessionId = plan.planning_session_id;
-    if (!sessionId) {
-      sessionId = crypto.randomUUID();
-      updatePlanningSessionId(plan.id, sessionId);
+    // Build the prompt including description if available
+    let taskDetails = `Task: ${plan.plan_title}`;
+    if (plan.description) {
+      taskDetails += `\nDescription: ${plan.description}`;
     }
+    taskDetails += `\nProject: ${plan.project_path}`;
 
-    // Build the prompt
     const prompt = `Create a detailed implementation plan for:
-Task: ${plan.plan_title}
-Project: ${plan.project_path}
+${taskDetails}
 
 Include:
 1. Overview
@@ -166,8 +164,8 @@ Include:
 
 Start with a # heading. Output ONLY the plan markdown, no other text.`;
 
-    // Spawn Claude with -p flag (print mode) and --session-id
-    const claudeArgs = ["-p", prompt, "--session-id", sessionId];
+    // Spawn Claude with -p flag (print mode) - no session ID needed for one-shot generation
+    const claudeArgs = ["-p", prompt];
     const result = spawnSync("claude", claudeArgs, {
       cwd: plan.project_path,
       stdio: ["inherit", "pipe", "inherit"],
@@ -265,6 +263,7 @@ console.log(`Task Tracker API server running on http://localhost:${PORT}`);
 Bun.serve({
   port: PORT,
   fetch: handleRequest,
+  idleTimeout: 120, // Allow up to 2 minutes for Claude operations
 });
 
 // Graceful shutdown handling

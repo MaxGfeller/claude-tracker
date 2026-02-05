@@ -9,8 +9,9 @@ let lastSavedPlanPath: string | null = null;
 
 export function handlePlanChat(plan: Plan, message: string): Response {
   // Create or reuse planning session ID (must be valid UUID)
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   let sessionId = plan.planning_session_id;
-  if (!sessionId) {
+  if (!sessionId || !uuidRegex.test(sessionId)) {
     sessionId = crypto.randomUUID();
     updatePlanningSessionId(plan.id, sessionId);
   }
