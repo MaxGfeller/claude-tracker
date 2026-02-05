@@ -4,10 +4,11 @@ import type { Plan } from "../api";
 interface KanbanColumnProps {
   title: string;
   plans: Plan[];
+  allPlans: Plan[];
   onRefresh: () => void;
 }
 
-export function KanbanColumn({ title, plans, onRefresh }: KanbanColumnProps) {
+export function KanbanColumn({ title, plans, allPlans, onRefresh }: KanbanColumnProps) {
   return (
     <div className="flex flex-col w-full sm:min-w-[300px] sm:w-[300px] sm:shrink-0 bg-muted/40 rounded-lg">
       <div className="flex items-center gap-2 px-3 py-3 font-semibold text-sm">
@@ -18,7 +19,7 @@ export function KanbanColumn({ title, plans, onRefresh }: KanbanColumnProps) {
       </div>
       <div className="flex-1 overflow-y-auto px-2 pb-2 space-y-2">
         {plans.map((plan) => (
-          <PlanCard key={plan.id} plan={plan} onRefresh={onRefresh} />
+          <PlanCard key={plan.id} plan={plan} allPlans={allPlans} onRefresh={onRefresh} />
         ))}
       </div>
     </div>

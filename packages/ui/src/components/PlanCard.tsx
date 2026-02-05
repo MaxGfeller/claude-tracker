@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent } from "./ui/card";
 import { Button } from "./ui/button";
 import {
@@ -11,7 +11,7 @@ import {
 import { LogViewer } from "./LogViewer";
 import { PlanViewer } from "./PlanViewer";
 import { PlanEditor } from "./PlanEditor";
-import { startPlanWork, generatePlan, deleteTask, type Plan } from "../api";
+import { startPlanWork, generatePlan, deleteTask, canStartWork, type Plan } from "../api";
 
 function formatWorktreePath(path: string): string {
   // Abbreviate home directory with ~
@@ -24,16 +24,35 @@ function formatWorktreePath(path: string): string {
 
 interface PlanCardProps {
   plan: Plan;
+  allPlans: Plan[];
   onRefresh: () => void;
 }
 
-export function PlanCard({ plan, onRefresh }: PlanCardProps) {
+export function PlanCard({ plan, allPlans, onRefresh }: PlanCardProps) {
   const [logOpen, setLogOpen] = useState(false);
   const [viewerOpen, setViewerOpen] = useState(false);
   const [editorOpen, setEditorOpen] = useState(false);
   const [starting, setStarting] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [isBlocked, setIsBlocked] = useState(false);
+  const [blockedByTask, setBlockedByTask] = useState<{ id: number; title: string | null; status: string } | null>(null);
+
+  // Get the dependency task if one exists
+  const dependsOnTask = plan.depends_on_id ? allPlans.find((p) => p.id === plan.depends_on_id) : null;
+
+  // Check if this task is blocked by its dependency
+  useEffect(() => {
+    if (plan.status === "open" && plan.depends_on_id) {
+      canStartWork(plan.id).then((result) => {
+        setIsBlocked(!result.allowed);
+        setBlockedByTask(result.blockedBy ?? null);
+      });
+    } else {
+      setIsBlocked(false);
+      setBlockedByTask(null);
+    }
+  }, [plan.id, plan.status, plan.depends_on_id]);
 
   const handleStartWork = async () => {
     setStarting(true);
@@ -82,7 +101,7 @@ export function PlanCard({ plan, onRefresh }: PlanCardProps) {
   };
 
   const isOpen = plan.status === "open";
-  const canStart = isOpen && plan.plan_path;
+  const canStart = isOpen && plan.plan_path && !isBlocked;
   const canViewLogs = plan.status === "in-progress" || plan.status === "in-review";
   const hasPlan = !!plan.plan_path;
   const canEdit = hasPlan && isOpen;
@@ -91,13 +110,33 @@ export function PlanCard({ plan, onRefresh }: PlanCardProps) {
 
   return (
     <>
-      <Card>
+      <Card className={isBlocked ? "opacity-60" : ""}>
         <CardContent className="flex flex-col gap-2 py-3 px-3">
           <div className="flex items-center gap-2">
             <span className="text-muted-foreground text-xs font-mono">#{plan.id}</span>
             <span className="text-xs text-muted-foreground truncate">{projectName}</span>
+            {isBlocked && (
+              <span className="text-xs bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-200 px-1.5 py-0.5 rounded">
+                Blocked
+              </span>
+            )}
           </div>
           <span className="font-medium text-sm leading-snug">{title}</span>
+          {dependsOnTask && (
+            <div className="text-xs text-muted-foreground">
+              <span className="inline-flex items-center gap-1">
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="9 18 15 12 9 6" />
+                </svg>
+                Depends on: #{dependsOnTask.id} {dependsOnTask.plan_title}
+              </span>
+            </div>
+          )}
+          {isBlocked && blockedByTask && (
+            <div className="text-xs text-yellow-600 dark:text-yellow-400">
+              Waiting for #{blockedByTask.id} to reach in-review
+            </div>
+          )}
           {plan.branch && (
             <span className="text-xs text-muted-foreground font-mono truncate">
               {plan.branch}

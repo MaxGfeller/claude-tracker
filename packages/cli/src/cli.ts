@@ -1,6 +1,23 @@
 #!/usr/bin/env bun
 
-import { addPlan, listPlans, updateStatus, getPlan, deletePlan, createTask, updatePlanPath, updateWorktreePath, type Plan } from "./db";
+import {
+  addPlan,
+  listPlans,
+  updateStatus,
+  getPlan,
+  deletePlan,
+  createTask,
+  updatePlanPath,
+  updateWorktreePath,
+  setDependency,
+  removeDependency,
+  getDependency,
+  getDependents,
+  canStartWork,
+  canComplete,
+  getDependencyChain,
+  type Plan,
+} from "./db";
 import { parsePlanTitle } from "./plans";
 import { startWork, startWorkMultiple } from "./work";
 import { selectPlans } from "./select";
@@ -95,11 +112,13 @@ ${BOLD}Usage:${RESET}
   tracker create [options] <title>           Create a new task (infers project from git root)
     --project, -p <path>                     Specify project path
     --description, -d <text>                 Add a description for the task
+    --depends-on <id>                        Set a dependency on another task
   tracker add <plan-path> <project-dir>   Register a plan
   tracker list                            List all plans grouped by project
   tracker status <id> <status>            Update plan status (open|in-progress|completed|in-review)
   tracker plan <id>                       Generate a plan for a task using Claude
   tracker work [id...]                    Start Claude Code on plans (interactive if no IDs)
+                                          Blocked tasks (with unmet dependencies) are skipped
   tracker usage                           Show current usage and quota status
   tracker checkout <id>                   Checkout plan branch and resume Claude Code conversation
   tracker complete [id]                   Merge plan branch into main and mark completed
@@ -107,6 +126,9 @@ ${BOLD}Usage:${RESET}
   tracker reset <id>                      Reset plan to open, optionally deleting its branch
   tracker cancel <id>                     Cancel a plan, deleting it and its branch
   tracker cleanup                         Remove orphaned worktrees (no matching task)
+  tracker set-dependency <id> <dep-id>    Set task <id> to depend on <dep-id>
+  tracker clear-dependency <id>           Remove dependency from task <id>
+  tracker show-deps <id>                  Show dependency chain for task <id>
   tracker config                          Show all config values
   tracker config <key>                    Get a config value
   tracker config <key> <value>            Set a config value
@@ -176,9 +198,10 @@ function cmdAdd(args: string[]) {
 function cmdCreate(args: string[]) {
   let projectPath: string | null = null;
   let description: string | null = null;
+  let dependsOn: number | null = null;
   let title: string | null = null;
 
-  // Parse args: --project <path>, --description <text>, or just <title>
+  // Parse args: --project <path>, --description <text>, --depends-on <id>, or just <title>
   let i = 0;
   while (i < args.length) {
     if (args[i] === "--project" || args[i] === "-p") {
@@ -186,6 +209,14 @@ function cmdCreate(args: string[]) {
       i += 2;
     } else if (args[i] === "--description" || args[i] === "-d") {
       description = args[i + 1];
+      i += 2;
+    } else if (args[i] === "--depends-on") {
+      const depId = parseInt(args[i + 1], 10);
+      if (isNaN(depId)) {
+        console.error(`${RED}Error: --depends-on requires a valid task ID${RESET}`);
+        process.exit(1);
+      }
+      dependsOn = depId;
       i += 2;
     } else {
       // Remaining args are the title
@@ -216,12 +247,28 @@ function cmdCreate(args: string[]) {
 
   const plan = createTask(resolvedProject, title, undefined, description ?? undefined);
 
+  // Set dependency if provided
+  if (dependsOn !== null) {
+    try {
+      setDependency(plan.id, dependsOn);
+    } catch (e: any) {
+      // If dependency fails, delete the task and report error
+      deletePlan(plan.id);
+      console.error(`${RED}Error: ${e.message}${RESET}`);
+      process.exit(1);
+    }
+  }
+
   console.log(`${GREEN}✓${RESET} Created task ${BOLD}#${plan.id}${RESET}`);
   console.log(`  Title:   ${plan.plan_title}`);
   if (plan.description) {
     console.log(`  Desc:    ${plan.description}`);
   }
   console.log(`  Project: ${plan.project_name}`);
+  if (dependsOn !== null) {
+    const dep = getPlan(dependsOn);
+    console.log(`  Depends: #${dependsOn} ${dep?.plan_title ?? "(unknown)"}`);
+  }
   console.log(`  ${DIM}Use "tracker plan ${plan.id}" to generate a plan${RESET}`);
 }
 
@@ -332,8 +379,22 @@ function cmdList() {
       const date = formatDate(p.created_at);
       const branchInfo = p.status === "in-review" && p.branch ? ` ${CYAN}${p.branch}${RESET}` : "";
       const worktreeInfo = p.worktree_path ? `\n      ${DIM}Worktree: ${formatWorktreePath(p.worktree_path)}${RESET}` : "";
+
+      // Show dependency info
+      let depInfo = "";
+      if (p.depends_on_id) {
+        const dep = getPlan(p.depends_on_id);
+        const depStatus = dep?.status ?? "unknown";
+        const isBlocked = p.status === "open" && depStatus !== "in-review" && depStatus !== "completed";
+        if (isBlocked) {
+          depInfo = `\n      ${YELLOW}⚠ Blocked by #${p.depends_on_id}${RESET} ${DIM}(${depStatus})${RESET}`;
+        } else {
+          depInfo = `\n      ${DIM}Depends on #${p.depends_on_id}${RESET}`;
+        }
+      }
+
       console.log(
-        `  ${color}${icon}${RESET} ${BOLD}#${p.id}${RESET} ${title} ${DIM}[${p.status}] ${date}${RESET}${branchInfo}${worktreeInfo}`
+        `  ${color}${icon}${RESET} ${BOLD}#${p.id}${RESET} ${title} ${DIM}[${p.status}] ${date}${RESET}${branchInfo}${worktreeInfo}${depInfo}`
       );
     }
   }
@@ -616,6 +677,13 @@ async function cmdComplete(args: string[]) {
   if (plan.status === "completed") {
     console.log(`${DIM}Plan #${id} is already completed.${RESET}`);
     return;
+  }
+
+  // Check if task can be completed (dependency must be completed)
+  const canCompleteResult = canComplete(plan.id);
+  if (!canCompleteResult.allowed) {
+    console.error(`${RED}Error: ${canCompleteResult.reason}${RESET}`);
+    process.exit(1);
   }
 
   if (dbOnly) {
@@ -1116,6 +1184,132 @@ function cmdUi(args: string[]) {
   process.exit(server.status ?? 0);
 }
 
+function cmdSetDependency(args: string[]) {
+  const [idStr, depIdStr] = args;
+  if (!idStr || !depIdStr) {
+    console.error(`${RED}Error: set-dependency requires <id> and <dep-id>${RESET}`);
+    process.exit(1);
+  }
+
+  const id = parseInt(idStr, 10);
+  const depId = parseInt(depIdStr, 10);
+  if (isNaN(id) || isNaN(depId)) {
+    console.error(`${RED}Error: Invalid task IDs${RESET}`);
+    process.exit(1);
+  }
+
+  try {
+    setDependency(id, depId);
+    const plan = getPlan(id);
+    const dep = getPlan(depId);
+    console.log(
+      `${GREEN}✓${RESET} Task ${BOLD}#${id}${RESET} now depends on ${BOLD}#${depId}${RESET} "${dep?.plan_title ?? "(unknown)"}"`
+    );
+    if (dep && dep.status !== "in-review" && dep.status !== "completed") {
+      console.log(`  ${YELLOW}⚠${RESET} Task #${id} is blocked until #${depId} reaches "in-review" status`);
+    }
+  } catch (e: any) {
+    console.error(`${RED}Error: ${e.message}${RESET}`);
+    process.exit(1);
+  }
+}
+
+function cmdClearDependency(args: string[]) {
+  const idStr = args[0];
+  if (!idStr) {
+    console.error(`${RED}Error: clear-dependency requires <id>${RESET}`);
+    process.exit(1);
+  }
+
+  const id = parseInt(idStr, 10);
+  if (isNaN(id)) {
+    console.error(`${RED}Error: Invalid task ID "${idStr}"${RESET}`);
+    process.exit(1);
+  }
+
+  const plan = getPlan(id);
+  if (!plan) {
+    console.error(`${RED}Error: Task #${id} not found${RESET}`);
+    process.exit(1);
+  }
+
+  if (!plan.depends_on_id) {
+    console.log(`${DIM}Task #${id} has no dependency.${RESET}`);
+    return;
+  }
+
+  try {
+    removeDependency(id);
+    console.log(`${GREEN}✓${RESET} Removed dependency from task ${BOLD}#${id}${RESET}`);
+  } catch (e: any) {
+    console.error(`${RED}Error: ${e.message}${RESET}`);
+    process.exit(1);
+  }
+}
+
+function cmdShowDeps(args: string[]) {
+  const idStr = args[0];
+  if (!idStr) {
+    console.error(`${RED}Error: show-deps requires <id>${RESET}`);
+    process.exit(1);
+  }
+
+  const id = parseInt(idStr, 10);
+  if (isNaN(id)) {
+    console.error(`${RED}Error: Invalid task ID "${idStr}"${RESET}`);
+    process.exit(1);
+  }
+
+  const plan = getPlan(id);
+  if (!plan) {
+    console.error(`${RED}Error: Task #${id} not found${RESET}`);
+    process.exit(1);
+  }
+
+  console.log(`\n${BOLD}Dependency chain for task #${id}:${RESET}\n`);
+
+  // Show the chain this task depends on
+  const chain = getDependencyChain(id);
+  if (chain.length > 1) {
+    console.log(`${BOLD}Depends on:${RESET}`);
+    for (let i = 0; i < chain.length - 1; i++) {
+      const p = chain[i];
+      const indent = "  ".repeat(i);
+      const color = statusColor(p.status);
+      const icon = statusIcon(p.status);
+      console.log(
+        `${indent}${color}${icon}${RESET} ${BOLD}#${p.id}${RESET} ${p.plan_title ?? "(untitled)"} ${DIM}[${p.status}]${RESET}`
+      );
+    }
+    // Show the current task
+    const color = statusColor(plan.status);
+    const icon = statusIcon(plan.status);
+    const indent = "  ".repeat(chain.length - 1);
+    console.log(
+      `${indent}${color}${icon}${RESET} ${BOLD}#${plan.id}${RESET} ${plan.plan_title ?? "(untitled)"} ${DIM}[${plan.status}]${RESET} ← this task`
+    );
+  } else {
+    console.log(`${DIM}No upstream dependencies${RESET}`);
+  }
+
+  // Show tasks that depend on this one
+  const dependents = getDependents(id);
+  if (dependents.length > 0) {
+    console.log(`\n${BOLD}Dependents (blocked by this task):${RESET}`);
+    for (const p of dependents) {
+      const color = statusColor(p.status);
+      const icon = statusIcon(p.status);
+      console.log(
+        `  ${color}${icon}${RESET} ${BOLD}#${p.id}${RESET} ${p.plan_title ?? "(untitled)"} ${DIM}[${p.status}]${RESET}`
+      );
+    }
+  } else {
+    console.log(`\n${DIM}No tasks depend on this one${RESET}`);
+  }
+
+  console.log();
+}
+
 // Main
 const [command, ...args] = process.argv.slice(2);
 
@@ -1155,6 +1349,15 @@ switch (command) {
     break;
   case "cleanup":
     await cmdCleanup();
+    break;
+  case "set-dependency":
+    cmdSetDependency(args);
+    break;
+  case "clear-dependency":
+    cmdClearDependency(args);
+    break;
+  case "show-deps":
+    cmdShowDeps(args);
     break;
   case "config":
     cmdConfig(args);

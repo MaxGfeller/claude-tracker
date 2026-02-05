@@ -10,6 +10,7 @@ export interface Plan {
   session_id: string | null;
   planning_session_id: string | null;
   worktree_path: string | null;
+  depends_on_id: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -44,12 +45,13 @@ export async function createTask(
   title: string,
   projectPath: string,
   projectName?: string,
-  description?: string
+  description?: string,
+  dependsOnId?: number
 ): Promise<Plan> {
   const res = await fetch("/api/plans", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ title, projectPath, projectName, description }),
+    body: JSON.stringify({ title, projectPath, projectName, description, dependsOnId }),
   });
   if (!res.ok) {
     const data = await res.json();
@@ -105,5 +107,41 @@ export interface UsageData {
 export async function fetchUsage(): Promise<UsageData> {
   const res = await fetch("/api/usage");
   if (!res.ok) throw new Error(`Failed to fetch usage: ${res.status}`);
+  return res.json();
+}
+
+// ============ Dependency Management ============
+
+export async function setDependency(
+  taskId: number,
+  dependsOnId: number | null
+): Promise<{ ok: boolean; plan?: Plan; error?: string }> {
+  const res = await fetch(`/api/plans/${taskId}/dependency`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ dependsOnId }),
+  });
+  return res.json();
+}
+
+export async function getDependency(taskId: number): Promise<{ dependency: Plan | null }> {
+  const res = await fetch(`/api/plans/${taskId}/dependency`);
+  if (!res.ok) throw new Error(`Failed to fetch dependency: ${res.status}`);
+  return res.json();
+}
+
+export async function getDependents(taskId: number): Promise<{ dependents: Plan[] }> {
+  const res = await fetch(`/api/plans/${taskId}/dependents`);
+  if (!res.ok) throw new Error(`Failed to fetch dependents: ${res.status}`);
+  return res.json();
+}
+
+export async function canStartWork(taskId: number): Promise<{
+  allowed: boolean;
+  reason?: string;
+  blockedBy?: { id: number; title: string | null; status: string };
+}> {
+  const res = await fetch(`/api/plans/${taskId}/can-start`);
+  if (!res.ok) throw new Error(`Failed to check can-start: ${res.status}`);
   return res.json();
 }

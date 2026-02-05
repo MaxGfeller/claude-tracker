@@ -23,11 +23,18 @@ export function CreateTaskModal({ open, onClose, onCreated }: CreateTaskModalPro
   const [projectPath, setProjectPath] = useState("");
   const [customPath, setCustomPath] = useState("");
   const [isCustomMode, setIsCustomMode] = useState(false);
+  const [dependsOnId, setDependsOnId] = useState<number | undefined>(undefined);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Get unique project paths from existing plans
   const existingProjects = [...new Set(plans.map((p) => p.project_path))].sort();
+
+  // Get tasks from the selected project that can be dependencies (not completed)
+  const selectedProjectPath = isCustomMode ? customPath : projectPath;
+  const availableDependencies = plans.filter(
+    (p) => p.project_path === selectedProjectPath && p.status !== "completed"
+  );
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -46,12 +53,19 @@ export function CreateTaskModal({ open, onClose, onCreated }: CreateTaskModalPro
 
     setCreating(true);
     try {
-      const plan = await createTask(title.trim(), finalPath.trim(), undefined, description.trim() || undefined);
+      const plan = await createTask(
+        title.trim(),
+        finalPath.trim(),
+        undefined,
+        description.trim() || undefined,
+        dependsOnId
+      );
       setTitle("");
       setDescription("");
       setProjectPath("");
       setCustomPath("");
       setIsCustomMode(false);
+      setDependsOnId(undefined);
       onCreated(plan);
       onClose();
     } catch (e: any) {
@@ -67,6 +81,7 @@ export function CreateTaskModal({ open, onClose, onCreated }: CreateTaskModalPro
     setProjectPath("");
     setCustomPath("");
     setIsCustomMode(false);
+    setDependsOnId(undefined);
     setError(null);
     onClose();
   };
@@ -156,6 +171,29 @@ export function CreateTaskModal({ open, onClose, onCreated }: CreateTaskModalPro
                 </button>
               )}
             </div>
+            {selectedProjectPath && availableDependencies.length > 0 && (
+              <div className="flex flex-col gap-2">
+                <label htmlFor="dependency" className="text-sm font-medium">
+                  Depends On <span className="text-muted-foreground font-normal">(optional)</span>
+                </label>
+                <select
+                  id="dependency"
+                  value={dependsOnId ?? ""}
+                  onChange={(e) => setDependsOnId(e.target.value ? parseInt(e.target.value, 10) : undefined)}
+                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                >
+                  <option value="">No dependency</option>
+                  {availableDependencies.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      #{p.id} {p.plan_title} ({p.status})
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-muted-foreground">
+                  This task will be blocked until the dependency reaches "in-review" status.
+                </p>
+              </div>
+            )}
             {error && <p className="text-sm text-red-500">{error}</p>}
           </div>
           <DialogFooter>

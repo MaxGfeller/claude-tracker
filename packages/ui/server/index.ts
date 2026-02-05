@@ -7,7 +7,19 @@ import { handlePlanChat } from "./chat";
 import { trackChild, removeChild, getActiveChildCount } from "./children";
 
 // Import DB functions from the CLI package via workspace
-import { listPlans, getPlan, createTask, updatePlanPath, deletePlan } from "@tracker/cli/src/db";
+import {
+  listPlans,
+  getPlan,
+  createTask,
+  updatePlanPath,
+  deletePlan,
+  setDependency,
+  getDependency,
+  getDependents,
+  canStartWork,
+  getUnblockedOpenTasks,
+  getBlockedTasks,
+} from "@tracker/cli/src/db";
 import { loadConfig } from "@tracker/cli/src/config";
 import { initOTelCollector, shutdownOTelCollector } from "@tracker/cli/src/otel-setup";
 import { UsageTracker } from "@tracker/cli/src/usage-tracker";
@@ -123,13 +135,29 @@ async function handleRequest(req: Request): Promise<Response> {
   }
 
   if (pathname === "/api/plans/work-all" && method === "POST") {
-    const plans = listPlans().filter((p: { status: string }) => p.status === "open");
-    if (plans.length === 0) {
-      return jsonResponse({ ok: false, started: [], message: "No open plans" }, 400);
+    // Only get unblocked open tasks (tasks without dependencies or with satisfied dependencies)
+    const unblockedPlans = getUnblockedOpenTasks();
+    const blockedPlans = getBlockedTasks();
+
+    if (unblockedPlans.length === 0 && blockedPlans.length === 0) {
+      return jsonResponse({ ok: false, started: [], blocked: [], message: "No open plans" }, 400);
+    }
+
+    if (unblockedPlans.length === 0) {
+      return jsonResponse({
+        ok: false,
+        started: [],
+        blocked: blockedPlans.map((p) => ({
+          id: p.id,
+          title: p.plan_title,
+          blockedBy: p.depends_on_id,
+        })),
+        message: `All ${blockedPlans.length} open plan(s) are blocked by dependencies`,
+      }, 400);
     }
 
     const started: number[] = [];
-    for (const plan of plans) {
+    for (const plan of unblockedPlans) {
       const child = spawn("bun", ["run", CLI_PATH, "work", String(plan.id)], {
         cwd: plan.project_path,
         stdio: "ignore",
@@ -144,7 +172,16 @@ async function handleRequest(req: Request): Promise<Response> {
       started.push(plan.id);
     }
 
-    return jsonResponse({ ok: true, started, message: `Started work on ${started.length} plan(s)` });
+    return jsonResponse({
+      ok: true,
+      started,
+      blocked: blockedPlans.map((p) => ({
+        id: p.id,
+        title: p.plan_title,
+        blockedBy: p.depends_on_id,
+      })),
+      message: `Started work on ${started.length} plan(s)${blockedPlans.length > 0 ? `, ${blockedPlans.length} blocked` : ""}`,
+    });
   }
 
   params = matchRoute(pathname, "/api/plans/:id/work");
@@ -154,6 +191,20 @@ async function handleRequest(req: Request): Promise<Response> {
     if (!plan) return jsonResponse({ error: "Not found" }, 404);
     if (plan.status !== "open") {
       return jsonResponse({ ok: false, message: `Plan is "${plan.status}", not "open"` }, 400);
+    }
+
+    // Check if task can start work (dependency check)
+    const canStart = canStartWork(id);
+    if (!canStart.allowed) {
+      return jsonResponse({
+        ok: false,
+        message: canStart.reason,
+        blockedBy: canStart.blockedBy ? {
+          id: canStart.blockedBy.id,
+          title: canStart.blockedBy.plan_title,
+          status: canStart.blockedBy.status,
+        } : undefined,
+      }, 400);
     }
 
     // Spawn tracker work as background process
@@ -183,8 +234,8 @@ async function handleRequest(req: Request): Promise<Response> {
   // POST /api/plans - Create a new task
   if (pathname === "/api/plans" && method === "POST") {
     try {
-      const body = await req.json() as { title: string; projectPath: string; projectName?: string; description?: string };
-      const { title, projectPath, projectName, description } = body;
+      const body = await req.json() as { title: string; projectPath: string; projectName?: string; description?: string; dependsOnId?: number };
+      const { title, projectPath, projectName, description, dependsOnId } = body;
 
       if (!title || !projectPath) {
         return jsonResponse({ error: "title and projectPath are required" }, 400);
@@ -195,10 +246,74 @@ async function handleRequest(req: Request): Promise<Response> {
       }
 
       const plan = createTask(projectPath, title, projectName, description);
+
+      // Set dependency if provided
+      if (dependsOnId !== undefined && dependsOnId !== null) {
+        try {
+          setDependency(plan.id, dependsOnId);
+          // Return updated plan with dependency
+          const updatedPlan = getPlan(plan.id);
+          return jsonResponse(updatedPlan);
+        } catch (depError: any) {
+          // If dependency fails, delete the task and return error
+          deletePlan(plan.id);
+          return jsonResponse({ error: depError.message }, 400);
+        }
+      }
+
       return jsonResponse(plan);
     } catch (e: any) {
       return jsonResponse({ error: e.message }, 400);
     }
+  }
+
+  // PUT /api/plans/:id/dependency - Set or clear a task's dependency
+  params = matchRoute(pathname, "/api/plans/:id/dependency");
+  if (params && method === "PUT") {
+    const id = parseInt(params.id, 10);
+    const plan = getPlan(id);
+    if (!plan) return jsonResponse({ error: "Not found" }, 404);
+
+    try {
+      const body = await req.json() as { dependsOnId: number | null };
+      const { dependsOnId } = body;
+
+      setDependency(id, dependsOnId);
+      const updatedPlan = getPlan(id);
+      return jsonResponse({ ok: true, plan: updatedPlan });
+    } catch (e: any) {
+      return jsonResponse({ error: e.message }, 400);
+    }
+  }
+
+  // GET /api/plans/:id/dependency - Get a task's dependency
+  params = matchRoute(pathname, "/api/plans/:id/dependency");
+  if (params && method === "GET") {
+    const id = parseInt(params.id, 10);
+    const plan = getPlan(id);
+    if (!plan) return jsonResponse({ error: "Not found" }, 404);
+
+    const dependency = getDependency(id);
+    return jsonResponse({ dependency });
+  }
+
+  // GET /api/plans/:id/dependents - Get tasks that depend on this task
+  params = matchRoute(pathname, "/api/plans/:id/dependents");
+  if (params && method === "GET") {
+    const id = parseInt(params.id, 10);
+    const plan = getPlan(id);
+    if (!plan) return jsonResponse({ error: "Not found" }, 404);
+
+    const dependents = getDependents(id);
+    return jsonResponse({ dependents });
+  }
+
+  // GET /api/plans/:id/can-start - Check if a task can start work
+  params = matchRoute(pathname, "/api/plans/:id/can-start");
+  if (params && method === "GET") {
+    const id = parseInt(params.id, 10);
+    const result = canStartWork(id);
+    return jsonResponse(result);
   }
 
   // POST /api/plans/:id/plan - Generate a plan via Claude

@@ -111,11 +111,16 @@ export function listWorktrees(projectPath: string): WorktreeInfo[] {
 
 /**
  * Create a worktree for a task
+ * @param projectPath - Path to the main git repository
+ * @param branchName - Name of the branch to create/checkout in the worktree
+ * @param taskId - Task ID (used for worktree path)
+ * @param baseBranch - Base branch to create from (default: "main"). Used when branch doesn't exist.
  */
 export function createWorktree(
   projectPath: string,
   branchName: string,
-  taskId: number
+  taskId: number,
+  baseBranch: string = "main"
 ): { ok: boolean; path: string; error?: string } {
   const wtPath = getWorktreePath(projectPath, taskId);
 
@@ -130,15 +135,29 @@ export function createWorktree(
     mkdirSync(parentDir, { recursive: true });
   }
 
-  // First, ensure the branch exists (create from main if needed)
+  // First, ensure the branch exists (create from baseBranch if needed)
   const branchCheck = spawnSync("git", ["rev-parse", "--verify", branchName], {
     cwd: projectPath,
     encoding: "utf-8",
   });
 
   if (branchCheck.status !== 0) {
-    // Branch doesn't exist, create it from main
-    const createBranch = spawnSync("git", ["branch", branchName, "main"], {
+    // Branch doesn't exist, create it from the base branch
+    // First, ensure the base branch exists locally (fetch if needed)
+    const baseBranchCheck = spawnSync("git", ["rev-parse", "--verify", baseBranch], {
+      cwd: projectPath,
+      encoding: "utf-8",
+    });
+
+    if (baseBranchCheck.status !== 0) {
+      // Try to fetch the base branch from origin
+      spawnSync("git", ["fetch", "origin", `${baseBranch}:${baseBranch}`], {
+        cwd: projectPath,
+        encoding: "utf-8",
+      });
+    }
+
+    const createBranch = spawnSync("git", ["branch", branchName, baseBranch], {
       cwd: projectPath,
       encoding: "utf-8",
     });
@@ -147,7 +166,7 @@ export function createWorktree(
       return {
         ok: false,
         path: wtPath,
-        error: `Failed to create branch: ${createBranch.stderr}`,
+        error: `Failed to create branch from ${baseBranch}: ${createBranch.stderr}`,
       };
     }
   }

@@ -1,4 +1,4 @@
-import { type Plan, updateStatus, updateBranch, updateSessionId, updateWorktreePath } from "./db";
+import { type Plan, updateStatus, updateBranch, updateSessionId, updateWorktreePath, getDependency, canStartWork } from "./db";
 import { loadConfig } from "./config";
 import { randomUUID } from "crypto";
 import { readFileSync, writeFileSync, mkdirSync, existsSync, unlinkSync } from "fs";
@@ -158,13 +158,17 @@ async function runReviewLoop(
 ): Promise<void> {
   const cwd = workingDir ?? plan.project_path;
 
+  // Determine diff base: use dependency's branch if available, otherwise main
+  const dependency = getDependency(plan.id);
+  const diffBase = dependency?.branch ?? "main";
+
   for (let round = 1; round <= MAX_REVIEW_ROUNDS; round++) {
     console.log(`  ${DIM}Review round ${round}/${MAX_REVIEW_ROUNDS}...${RESET}`);
 
-    // Get diff against main
+    // Get diff against the base branch (dependency branch or main)
     let diff: string;
     try {
-      diff = execSync("git diff main...HEAD", {
+      diff = execSync(`git diff ${diffBase}...HEAD`, {
         cwd,
         encoding: "utf-8",
         maxBuffer: 10 * 1024 * 1024,
@@ -175,7 +179,7 @@ async function runReviewLoop(
     }
 
     if (!diff.trim()) {
-      console.log(`${YELLOW}⚠${RESET} No diff found against main — skipping review`);
+      console.log(`${YELLOW}⚠${RESET} No diff found against ${diffBase} — skipping review`);
       return;
     }
 
@@ -254,15 +258,31 @@ export async function startWork(plan: Plan, otelEnv?: Record<string, string>): P
     return;
   }
 
+  // Check if task can start work (dependency check)
+  const canStart = canStartWork(plan.id);
+  if (!canStart.allowed) {
+    console.log(
+      `${YELLOW}⚠${RESET} Plan ${BOLD}#${plan.id}${RESET} is blocked: ${canStart.reason}`
+    );
+    return;
+  }
+
   const config = loadConfig();
   const worktreeEnabled = config.worktree?.enabled ?? true;
   const slug = slugify(plan.plan_title ?? "untitled");
   const branch = `plan/${plan.id}-${slug}`;
 
+  // Determine base branch: use dependency's branch if available, otherwise main
+  const dependency = getDependency(plan.id);
+  const baseBranch = dependency?.branch ?? "main";
+
   console.log(
     `${BOLD}▶${RESET} Starting work on plan ${BOLD}#${plan.id}${RESET}: ${plan.plan_title ?? "(untitled)"}`
   );
   console.log(`  ${DIM}Branch: ${branch}${RESET}`);
+  if (dependency) {
+    console.log(`  ${DIM}Based on: ${baseBranch} (task #${dependency.id})${RESET}`);
+  }
   console.log(`  ${DIM}Project: ${plan.project_path}${RESET}`);
 
   let workingDir = plan.project_path;
@@ -272,8 +292,8 @@ export async function startWork(plan: Plan, otelEnv?: Record<string, string>): P
   const useWorktree = worktreeEnabled && checkGitVersion().supported;
 
   if (useWorktree) {
-    // Create worktree with the branch
-    const wtResult = createWorktree(plan.project_path, branch, plan.id);
+    // Create worktree with the branch, based on dependency branch or main
+    const wtResult = createWorktree(plan.project_path, branch, plan.id, baseBranch);
     if (wtResult.ok) {
       workingDir = wtResult.path;
       worktreePath = wtResult.path;
@@ -287,15 +307,16 @@ export async function startWork(plan: Plan, otelEnv?: Record<string, string>): P
   // If not using worktree, create branch in main repo
   if (!worktreePath) {
     try {
-      const mainResult = Bun.spawnSync(["git", "checkout", "main"], {
+      // Checkout the base branch first
+      const baseResult = Bun.spawnSync(["git", "checkout", baseBranch], {
         cwd: plan.project_path,
         stdout: "pipe",
         stderr: "pipe",
       });
 
-      if (mainResult.exitCode !== 0) {
-        const stderr = mainResult.stderr.toString().trim();
-        console.error(`${RED}✗${RESET} Failed to checkout main: ${stderr}`);
+      if (baseResult.exitCode !== 0) {
+        const stderr = baseResult.stderr.toString().trim();
+        console.error(`${RED}✗${RESET} Failed to checkout ${baseBranch}: ${stderr}`);
         return;
       }
 

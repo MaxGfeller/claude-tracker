@@ -98,6 +98,7 @@ export function Dashboard({ showCompleted, selectedProjects }: DashboardProps) {
             key={col.status}
             title={col.title}
             plans={grouped.get(col.status) ?? []}
+            allPlans={plans}
             onRefresh={refresh}
           />
         ))}
