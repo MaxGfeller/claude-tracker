@@ -123,7 +123,6 @@ ${BOLD}Config keys:${RESET}
   usageLimits.organizationTier           (number)   Claude tier 1-4 (default: auto-detect)
   worktree.enabled                       (boolean)  Use git worktrees for isolation (default: true)
   worktree.copyGitignored                (boolean)  Copy .env files to worktrees (default: true)
-  worktree.autoCleanupOnComplete         (boolean)  Remove worktree on completion (default: false)
 
 ${BOLD}Examples:${RESET}
   tracker create "Add user authentication"
@@ -638,7 +637,37 @@ async function cmdComplete(args: string[]) {
   console.log(`  ${DIM}Branch:  ${branch}${RESET}`);
   console.log(`  ${DIM}Project: ${cwd}${RESET}\n`);
 
-  // Check for uncommitted changes
+  // If there's a worktree, we need to remove it first to free up the branch
+  // (git doesn't allow checking out a branch that's in use by a worktree)
+  if (plan.worktree_path && worktreeExists(plan.project_path, plan.id)) {
+    // Check for uncommitted changes in the worktree first
+    const wtStatus = git(["status", "--porcelain"], plan.worktree_path);
+    if (wtStatus.stdout) {
+      console.log(`${YELLOW}⚠${RESET} Worktree has uncommitted changes:\n`);
+      console.log(`${DIM}${wtStatus.stdout.trim()}${RESET}\n`);
+      const proceed = await confirm({
+        message: "Continue anyway? Uncommitted changes will be lost when the worktree is removed.",
+        default: false,
+      });
+      if (!proceed) {
+        console.log(`${DIM}Aborted.${RESET}`);
+        return;
+      }
+    }
+
+    console.log(`  ${DIM}Removing worktree to free up branch...${RESET}`);
+    const wtRemoveResult = removeWorktree(plan.project_path, plan.id);
+    if (wtRemoveResult.ok) {
+      updateWorktreePath(plan.id, null);
+      console.log(`  ${GREEN}✓${RESET} Removed worktree at ${formatWorktreePath(plan.worktree_path)}`);
+    } else {
+      console.error(`${RED}✗${RESET} Failed to remove worktree: ${wtRemoveResult.error}`);
+      console.error(`${DIM}You may need to manually remove the worktree with: git worktree remove ${plan.worktree_path} --force${RESET}`);
+      process.exit(1);
+    }
+  }
+
+  // Check for uncommitted changes in main repo
   const status = git(["status", "--porcelain"], cwd);
   if (status.stdout) {
     console.log(`${YELLOW}⚠${RESET} Working directory has uncommitted changes:\n`);
@@ -691,19 +720,6 @@ async function cmdComplete(args: string[]) {
   // Update status in DB
   updateStatus(plan.id, "completed");
   console.log(`\n${GREEN}✓${RESET} Plan ${BOLD}#${plan.id}${RESET} → ${GREEN}completed${RESET}`);
-
-  // Auto-cleanup worktree if configured
-  const config = loadConfig();
-  if (config.worktree?.autoCleanupOnComplete && plan.worktree_path) {
-    console.log(`  ${DIM}Cleaning up worktree...${RESET}`);
-    const cleanupResult = removeWorktree(plan.project_path, plan.id);
-    if (cleanupResult.ok) {
-      updateWorktreePath(plan.id, null);
-      console.log(`  ${GREEN}✓${RESET} Removed worktree at ${formatWorktreePath(plan.worktree_path)}`);
-    } else {
-      console.log(`  ${YELLOW}⚠${RESET} Failed to remove worktree: ${cleanupResult.error}`);
-    }
-  }
 }
 
 async function cmdReset(args: string[]) {
