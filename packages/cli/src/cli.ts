@@ -238,10 +238,10 @@ function cmdPlan(args: string[]) {
   console.log(`${BOLD}▶${RESET} Generating plan for task ${BOLD}#${plan.id}${RESET}: ${plan.plan_title}`);
   console.log(`  ${DIM}Project: ${plan.project_path}${RESET}\n`);
 
-  // Create or reuse planning session ID
+  // Create or reuse planning session ID (must be valid UUID)
   let sessionId = plan.planning_session_id;
   if (!sessionId) {
-    sessionId = `planning-${plan.id}-${Date.now()}`;
+    sessionId = crypto.randomUUID();
     updatePlanningSessionId(plan.id, sessionId);
   }
 

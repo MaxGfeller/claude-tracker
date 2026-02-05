@@ -8,10 +8,10 @@ import { homedir } from "os";
 let lastSavedPlanPath: string | null = null;
 
 export function handlePlanChat(plan: Plan, message: string): Response {
-  // Create or reuse planning session ID
+  // Create or reuse planning session ID (must be valid UUID)
   let sessionId = plan.planning_session_id;
   if (!sessionId) {
-    sessionId = `planning-${plan.id}-${Date.now()}`;
+    sessionId = crypto.randomUUID();
     updatePlanningSessionId(plan.id, sessionId);
   }
 
