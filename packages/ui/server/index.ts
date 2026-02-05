@@ -267,34 +267,30 @@ async function handleRequest(req: Request): Promise<Response> {
     }
   }
 
-  // PUT /api/plans/:id/dependency - Set or clear a task's dependency
+  // GET/PUT /api/plans/:id/dependency - Get or set a task's dependency
   params = matchRoute(pathname, "/api/plans/:id/dependency");
-  if (params && method === "PUT") {
+  if (params) {
     const id = parseInt(params.id, 10);
     const plan = getPlan(id);
     if (!plan) return jsonResponse({ error: "Not found" }, 404);
 
-    try {
-      const body = await req.json() as { dependsOnId: number | null };
-      const { dependsOnId } = body;
+    if (method === "PUT") {
+      try {
+        const body = await req.json() as { dependsOnId: number | null };
+        const { dependsOnId } = body;
 
-      setDependency(id, dependsOnId);
-      const updatedPlan = getPlan(id);
-      return jsonResponse({ ok: true, plan: updatedPlan });
-    } catch (e: any) {
-      return jsonResponse({ error: e.message }, 400);
+        setDependency(id, dependsOnId);
+        const updatedPlan = getPlan(id);
+        return jsonResponse({ ok: true, plan: updatedPlan });
+      } catch (e: any) {
+        return jsonResponse({ error: e.message }, 400);
+      }
     }
-  }
 
-  // GET /api/plans/:id/dependency - Get a task's dependency
-  params = matchRoute(pathname, "/api/plans/:id/dependency");
-  if (params && method === "GET") {
-    const id = parseInt(params.id, 10);
-    const plan = getPlan(id);
-    if (!plan) return jsonResponse({ error: "Not found" }, 404);
-
-    const dependency = getDependency(id);
-    return jsonResponse({ dependency });
+    if (method === "GET") {
+      const dependency = getDependency(id);
+      return jsonResponse({ dependency });
+    }
   }
 
   // GET /api/plans/:id/dependents - Get tasks that depend on this task
