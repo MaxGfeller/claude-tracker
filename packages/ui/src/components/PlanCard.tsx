@@ -11,7 +11,7 @@ import {
 import { LogViewer } from "./LogViewer";
 import { PlanViewer } from "./PlanViewer";
 import { PlanEditor } from "./PlanEditor";
-import { startPlanWork, generatePlan, deleteTask, type Plan } from "../api";
+import { startPlanWork, generatePlan, waitForPlanGeneration, deleteTask, type Plan } from "../api";
 
 function formatWorktreePath(path: string): string {
   // Abbreviate home directory with ~
@@ -51,7 +51,15 @@ export function PlanCard({ plan, onRefresh }: PlanCardProps) {
   const handleGeneratePlan = async () => {
     setGenerating(true);
     try {
-      const result = await generatePlan(plan.id);
+      // Start generation (returns immediately)
+      const startResult = await generatePlan(plan.id);
+      if (!startResult.ok) {
+        console.error("Failed to start plan generation:", startResult.message);
+        return;
+      }
+
+      // Poll for completion
+      const result = await waitForPlanGeneration(plan.id);
       if (result.ok) {
         onRefresh();
       } else {
