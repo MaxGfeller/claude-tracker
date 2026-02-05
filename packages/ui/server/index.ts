@@ -8,6 +8,10 @@ import { trackChild, removeChild, getActiveChildCount } from "./children";
 
 // Import DB functions from the CLI package via workspace
 import { listPlans, getPlan, createTask, updatePlanPath, deletePlan } from "@tracker/cli/src/db";
+import { loadConfig } from "@tracker/cli/src/config";
+import { initOTelCollector, shutdownOTelCollector } from "@tracker/cli/src/otel-setup";
+import { UsageTracker } from "@tracker/cli/src/usage-tracker";
+import { buildUsageLimits } from "@tracker/cli/src/usage-check";
 
 const PORT = parseInt(process.env.PORT ?? "3847", 10);
 const UI_DIR = resolve(import.meta.dir, "..");
@@ -46,6 +50,53 @@ async function handleRequest(req: Request): Promise<Response> {
   if (pathname === "/api/plans" && method === "GET") {
     const plans = listPlans();
     return jsonResponse(plans);
+  }
+
+  // GET /api/usage - Get current usage and quota information
+  if (pathname === "/api/usage" && method === "GET") {
+    const config = loadConfig();
+
+    if (!config.usageLimits?.enabled) {
+      return jsonResponse({
+        enabled: false,
+        message: "Usage monitoring is disabled",
+      });
+    }
+
+    try {
+      await initOTelCollector();
+      const tracker = new UsageTracker();
+      const limits = buildUsageLimits(config.usageLimits);
+      const usage = await tracker.getCurrentUsage(limits);
+      await shutdownOTelCollector();
+
+      const usagePercent = Math.floor((usage.inputTokensPerMinute / limits.maxInputTokensPerMinute) * 100);
+
+      return jsonResponse({
+        enabled: true,
+        usage: {
+          inputTokensPerMinute: Math.floor(usage.inputTokensPerMinute),
+          requestsPerMinute: Math.floor(usage.requestsPerMinute),
+          totalCostUSD: parseFloat(usage.totalCostUSD.toFixed(2)),
+          availableInputTokens: Math.floor(usage.availableInputTokens),
+          availableRequests: Math.floor(usage.availableRequests),
+          usagePercent,
+        },
+        limits: {
+          maxInputTokensPerMinute: limits.maxInputTokensPerMinute,
+          maxRequestsPerMinute: limits.maxRequestsPerMinute,
+          maxCostPerSession: limits.maxCostPerSession,
+          minAvailableInputTokens: limits.minAvailableInputTokens,
+          minAvailableRequests: limits.minAvailableRequests,
+        },
+        config: config.usageLimits,
+      });
+    } catch (error: any) {
+      return jsonResponse({
+        enabled: true,
+        error: error.message || "Failed to fetch usage data",
+      }, 500);
+    }
   }
 
   let params = matchRoute(pathname, "/api/plans/:id");

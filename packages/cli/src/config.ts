@@ -21,7 +21,7 @@ const DEFAULTS: TrackerConfig = {
   skipPermissions: false,
   maxReviewRounds: 5,
   usageLimits: {
-    enabled: false,
+    enabled: true,
     minAvailableInputTokens: 10000,
     minAvailableRequests: 5,
     maxCostPerSession: 1.0,

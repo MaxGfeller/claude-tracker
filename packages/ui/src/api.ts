@@ -78,3 +78,31 @@ export async function deleteTask(id: number): Promise<{ ok: boolean; message: st
   const res = await fetch(`/api/plans/${id}`, { method: "DELETE" });
   return res.json();
 }
+
+export interface UsageData {
+  enabled: boolean;
+  message?: string;
+  error?: string;
+  usage?: {
+    inputTokensPerMinute: number;
+    requestsPerMinute: number;
+    totalCostUSD: number;
+    availableInputTokens: number;
+    availableRequests: number;
+    usagePercent: number;
+  };
+  limits?: {
+    maxInputTokensPerMinute: number;
+    maxRequestsPerMinute: number;
+    maxCostPerSession: number;
+    minAvailableInputTokens: number;
+    minAvailableRequests: number;
+  };
+  config?: any;
+}
+
+export async function fetchUsage(): Promise<UsageData> {
+  const res = await fetch("/api/usage");
+  if (!res.ok) throw new Error(`Failed to fetch usage: ${res.status}`);
+  return res.json();
+}
